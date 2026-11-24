@@ -71,3 +71,79 @@ def test_user_message_queued_while_busy(brain):
     first_done = next(i for i, e in enumerate(ev) if e["t"] == "phase" and e["phase"] == "user" and i > users[0])
     assert users[1] > first_done
     assert consistent(a)
+
+
+# ───────────────────────────────────────────────────────────────── harness guards
+
+
+def calc(brain, expr):
+    return call_text(brain, "calculator", {"expr": expr})
+
+
+def tool_segs(a):
+    return [g for g in a.segs if g.kind == "tool"]
+
+
+def test_malformed_call_gets_honest_error(brain):
+    ev, s, a = make(brain)
+    script(a, [brain.tool_call_open + "{not json" + brain.tool_call_close, "ok"])
+    s.command({"op": "user", "text": "go"})
+    run(s)
+    t = kinds(ev, "tool")
+    assert len(t) == 1 and t[0]["error"] is True
+    assert "could not parse" in tool_segs(a)[0].text
+    assert s.phase == "user" and consistent(a)
+
+
+def test_unknown_tool_and_bad_args(brain):
+    ev, s, a = make(brain)
+    script(a, [call_text(brain, "nope", {}), call_text(brain, "calculator", {"expr": 5}), "done"])
+    s.command({"op": "user", "text": "go"})
+    run(s)
+    t = kinds(ev, "tool")
+    assert [(e["name"], e["error"]) for e in t] == [("nope", True), ("calculator", True)]
+    assert "unknown tool" in tool_segs(a)[0].text and "must be a string" in tool_segs(a)[1].text
+
+
+def test_loop_detection_nudges(brain):
+    ev, s, a = make(brain)
+    script(a, [calc(brain, "2+2")] * 3 + ["The answer is 4."])
+    s.command({"op": "user", "text": "go"})
+    run(s)
+    n = kinds(ev, "nudge")
+    assert [e["kind"] for e in n] == ["loop"]
+    assert any(g.kind == "system" and g.text.startswith("[harness]") for g in a.segs)
+    assert consistent(a)
+
+    ev, s, a = make(brain)
+    s.command({"op": "nudges", "value": False})
+    script(a, [calc(brain, "2+2")] * 3 + ["The answer is 4."])
+    s.command({"op": "user", "text": "go"})
+    run(s)
+    assert kinds(ev, "nudge") == []
+
+
+def test_step_cap(brain):
+    ev, s, a = make(brain)
+    s.command({"op": "step_cap", "value": 2})
+    script(a, [calc(brain, "1+1"), calc(brain, "2+2"), calc(brain, "3+3"), calc(brain, "4+4")])
+    s.command({"op": "user", "text": "go"})
+    run(s)
+    assert [e["kind"] for e in kinds(ev, "nudge")] == ["step_cap"]
+    assert len(kinds(ev, "tool")) == 2
+    assert s.phase == "user" and consistent(a)
+
+
+def test_plan_reminder(brain):
+    ev, s, a = make(brain)
+    plan = {"items": [{"text": "add numbers", "status": "in_progress"}]}
+    script(a, [call_text(brain, "update_plan", plan), calc(brain, "1+1"), calc(brain, "2+2"), calc(brain, "3+3"),
+               "Done."])
+    s.command({"op": "user", "text": "go"})
+    run(s)
+    assert kinds(ev, "plan")[0]["items"] == [{"text": "add numbers", "status": "in_progress"}]
+    segs = tool_segs(a)
+    assert "[plan reminder]" in segs[0].text  # right after update_plan
+    assert "[plan reminder]" not in segs[1].text and "[plan reminder]" not in segs[2].text
+    assert "[plan reminder]" in segs[3].text  # every 4th round
+    assert consistent(a)
