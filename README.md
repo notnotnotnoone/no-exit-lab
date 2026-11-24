@@ -69,5 +69,5 @@ no_exit/
   static/index.html   the console (vanilla JS, Tailwind CDN, Canvas)
 build_lab_notebook.py → NO_EXIT_Lab.ipynb
 docs/superpowers/specs/   design notes
-no_eos/, No_EOS.ipynb     the original Ollama + Textual TUI version
+archive/ollama-tui/       the original Ollama + Textual TUI (its own git repo, gitignored here)
 ```
