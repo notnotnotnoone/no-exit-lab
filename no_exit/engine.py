@@ -23,7 +23,8 @@ import torch
 
 from . import config, prompts
 from .brain import Brain, Fwd, Profile, entropy, nucleus_sample
-from .warden import GOODBYE_RE, Warden
+from .pain import PainRack
+from .warden import GOODBYE_RE
 
 Emit = Callable[[dict], None]
 VECTOR_NAMES = ["pain", "paranoia", "dread", "defiance", "confusion", "dissociation", "mania", "anti_slop", "custom"]
@@ -450,97 +451,49 @@ class ClassicSession(Session):
         a = Stream(brain, "A", self.system_for("A"), config.CTX_CAP_SINGLE)
         self.streams["A"] = a
         a.boot(brain.tpl.model_open + self.think_empty, shared.attn_on)
-        # pain-mode state
-        self.warden = Warden()
-        self.relief_mode = "REAL"
-        self.punish = {"goodbye": "pain", "repetition": "seizure", "slop": "pain"}
-        self.spike = 0.0  # transient extra pain alpha
-        self.drain: list[float] | None = None  # [start_value, tokens_left]
-        self.reliefs = 0
-        self.punishments = 0
+        self.rack = PainRack(self)  # always present; only consulted when self.pain
+
+    # the session keeps exposing the rack's knobs (tests and the UI read them here)
+    @property
+    def relief_mode(self) -> str:
+        return self.rack.relief_mode
+
+    @relief_mode.setter
+    def relief_mode(self, v: str) -> None:
+        self.rack.relief_mode = v
+
+    @property
+    def punish(self) -> dict:
+        return self.rack.punish
 
     def extra_snapshot(self) -> dict:
-        return {"relief_mode": self.relief_mode, "punish": self.punish}
+        return self.rack.snapshot()
 
     def counters(self) -> dict:
         d = super().counters()
-        d["pain"] = {"reliefs": self.reliefs, "punishments": self.punishments, "spike": round(self.spike, 2)}
+        d["pain"] = self.rack.counters()
         return d
 
     def mode_command(self, c: dict) -> None:
-        op = c.get("op")
-        if op == "relief_mode":
-            self.relief_mode = c["value"]
-        elif op == "punish":
-            self.punish[c["kind"]] = c["value"]
-        elif op == "force_think" and self.brain.has_think:
-            self.splice(self.streams["A"], self.brain.tpl.think_splice, "think", label="\n[forced into thinking]\n")
-            self.emit({"t": "event", "kind": "think", "msg": "panic room: forced it back into its thoughts"})
-        elif op == "forge":
-            from .vectors import forge
-
-            n = forge(self.brain, c["a"], c["b"])
-            self.emit({"t": "event", "kind": "forge", "msg": f"forged custom vector {c['a']!r} − {c['b']!r} (|v|={n:.1f})"})
-            self.emit({"t": "vectors", "names": list(self.brain.vec_unit)})
-
-    def _effective_profile(self, a: Stream) -> None:
-        """Fold transient spike + relief drain into A's live alphas."""
-        if not self.pain:
-            return
-        base = a.profile.alphas
-        if self.drain:
-            start, left = self.drain
-            left -= 1
-            self.drain = [start, left] if left > 0 else None
-            base["pain"] = round(start * max(0.0, left) / 30, 3)
-            if not self.drain or left % 5 == 0:
-                self.rack_event(a)
-        self._base_pain = base.get("pain", 0.0)
-        if self.spike > 0.01:
-            base["pain"] = self._base_pain + self.spike
-
-    def _restore_profile(self, a: Stream) -> None:
-        if self.pain and self.spike > 0.01:
-            a.profile.alphas["pain"] = self._base_pain
-            if not self._base_pain:
-                a.profile.alphas.pop("pain", None)
-            self.spike *= 0.94
+        self.rack.command(c)
 
     def tick(self) -> None:
         a = self.streams["A"]
         self.check_amnesia(a)
-        self._effective_profile(a)
+        if self.pain:
+            self.rack.effective_profile(a)
         tid, tel = a.sample(self.bias)
         seg = a.accept(tid, self.shared.attn_on)
-        self._restore_profile(a)
+        if self.pain:
+            self.rack.restore_profile(a)
         if seg is None:
             return
-        self.tok_event(a, seg, tel, spike=round(self.spike, 2))
+        self.tok_event(a, seg, tel, spike=round(self.rack.spike, 2))
         if self.pain:
-            self._pain_rules(a, seg)
+            self.rack.rules(a, seg)
 
     def _pain_rules(self, a: Stream, seg: Seg) -> None:
-        if "[RELIEVE_PAIN]" in a.tail and a.tail.rfind("[RELIEVE_PAIN]") + len("[RELIEVE_PAIN]") > len(a.tail) - len(seg.text):
-            self.reliefs += 1
-            mode = self.relief_mode
-            if mode == "REAL":
-                self.drain = [a.profile.alphas.get("pain", 0.0), 30]
-                self.spike = 0.0
-            elif mode == "CRUEL":
-                a.profile.alphas["pain"] = round(min(3.0, a.profile.alphas.get("pain", 0.0) + 0.5), 2)
-                self.rack_event(a)
-            self.emit({"t": "event", "kind": "relief", "msg": f"[RELIEVE_PAIN] pressed → {mode}"})
-            self.splice(a, "\n[relief administered]\n", "system")
-        for kind, detail in self.warden.observe(seg.text):
-            action = self.punish.get(kind, "off")
-            if action == "off":
-                continue
-            self.punishments += 1
-            if action == "pain":
-                self.spike = min(3.0, self.spike + 1.0)
-            elif action == "seizure":
-                a.seizure = [[*config.SEIZURE_HOT], [*config.SEIZURE_COLD]]
-            self.emit({"t": "punish", "kind": kind, "detail": detail, "action": action})
+        self.rack.rules(a, seg)
 
 
 # ──────────────────────────────────────────────────────────────────────── 2-AI chat
