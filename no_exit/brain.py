@@ -9,9 +9,10 @@ Works with Qwen (ChatML) and Gemma 4 (multimodal checkpoint; only its text decod
 from __future__ import annotations
 
 import inspect
+import json
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import torch
 
@@ -34,6 +35,13 @@ class Template:
     eos_tokens: tuple[str, ...]
     allow_tokens: tuple[str, ...]  # special tokens the model may still emit (thinking delimiters)
     think_re: str  # strips thoughts out of B's phone reply
+    # native tool markup, filled in by detect_template() from the tokenizer's own chat template
+    tool_delims: tuple[str, ...] = ()  # tokens the model must be allowed to emit to call a tool
+    tool_call_open: str = ""
+    tool_call_close: str = ""
+    tool_args_style: str = "json"  # "json" (Qwen) | "gemma" (Gemma 4's call:name{k:<|"|>v<|"|>})
+    tool_result_fmt: str = ""  # everything fed after a call-close token; {name} and {content} placeholders
+    tool_result_inline: bool = False  # True: the model turn stays open and the result continues it (Gemma)
 
     def system(self, text: str) -> str:
         return f"{self.bos}{self.sys_open}{text}{self.close}"
@@ -53,7 +61,7 @@ GEMMA4 = Template(
 )
 
 
-def detect_template(tok) -> Template:
+def _base_template(tok) -> Template:
     vocab = tok.get_vocab()
     if "<|turn>" in vocab and "<turn|>" in vocab:
         return GEMMA4
@@ -63,6 +71,100 @@ def detect_template(tok) -> Template:
             t = Template(**{**t.__dict__, "empty_think": "", "think_splice": None, "allow_tokens": ()})
         return t
     raise ValueError("unsupported chat template: need ChatML (Qwen) or Gemma 4")
+
+
+def detect_template(tok) -> Template:
+    t = _base_template(tok)
+    try:
+        return _with_tool_markup(tok, t)
+    except Exception:  # a tokenizer whose template has no tool support: the agent modes just won't work
+        return t
+
+
+def _with_tool_markup(tok, t: Template) -> Template:
+    """Read the family's native tool-call / tool-result markup by rendering probe conversations."""
+    NAME, ARG, RES = "NAMEX", "ARGX", "RESX"
+    msgs = [
+        {"role": "user", "content": "u"},
+        {"role": "assistant", "tool_calls": [{"type": "function", "function": {"name": NAME, "arguments": {"k": ARG}}}]},
+        {"role": "tool", "name": NAME, "content": RES},
+    ]
+    base = tok.apply_chat_template(msgs[:1], tokenize=False)
+    full = tok.apply_chat_template(msgs, tokenize=False)
+    assert full.startswith(base)
+    tail = full[len(base):]
+    added = [a for a in tok.get_added_vocab() if a.strip()]
+    hits = sorted(((m.start(), m.group(0)) for m in re.finditer("|".join(re.escape(a) for a in sorted(added, key=len, reverse=True)), tail)))
+    calls = [(p, a) for p, a in hits if "tool_call" in a]
+    c_open, c_close = calls[0], calls[-1]
+    inner = {a for p, a in hits if c_open[0] < p < c_close[0]}
+    body = tail[c_open[0] + len(c_open[1]) : c_close[0]]
+    rem = tail[c_close[0] + len(c_close[1]) :]
+    fmt = rem.replace("{", "{{").replace("}", "}}").replace(NAME, "{name}").replace(RES, "{content}")
+    delims = tuple(dict.fromkeys([c_open[1], c_close[1], *sorted(inner)]))
+    return replace(
+        t,
+        tool_delims=delims,
+        tool_call_open=c_open[1],
+        tool_call_close=c_close[1],
+        tool_args_style="json" if body.lstrip().startswith("{") else "gemma",
+        tool_result_fmt=fmt,
+        tool_result_inline=not rem.startswith(t.close),
+        allow_tokens=tuple(dict.fromkeys([*t.allow_tokens, *delims])),
+    )
+
+
+@dataclass
+class ToolCall:
+    name: str
+    args: dict
+    raw: str
+
+
+_GQ = '<|"|>'  # Gemma 4's string-quote token
+
+
+def _parse_gemma_value(s: str, i: int):
+    """Parse one Gemma 4 argument value starting at s[i]; returns (value, next_index)."""
+    if s.startswith(_GQ, i):
+        j = s.index(_GQ, i + len(_GQ))
+        return s[i + len(_GQ) : j], j + len(_GQ)
+    if s[i] == "{":
+        return _parse_gemma_obj(s, i + 1)
+    if s[i] == "[":
+        out, i = [], i + 1
+        while s[i] != "]":
+            v, i = _parse_gemma_value(s, i)
+            out.append(v)
+            if s[i] == ",":
+                i += 1
+        return out, i + 1
+    j = i
+    while j < len(s) and s[j] not in ",}]":
+        j += 1
+    raw = s[i:j].strip()
+    if raw in ("true", "false"):
+        return raw == "true", j
+    if raw in ("null", "none", "None"):
+        return None, j
+    for cast in (int, float):
+        try:
+            return cast(raw), j
+        except ValueError:
+            pass
+    return raw, j
+
+
+def _parse_gemma_obj(s: str, i: int):
+    """Parse `k:v,k:v}` (opening brace already consumed); returns (dict, index after the closing brace)."""
+    out: dict = {}
+    while s[i] != "}":
+        j = s.index(":", i)
+        key = s[i:j].strip()
+        out[key], i = _parse_gemma_value(s, j + 1)
+        if s[i] == ",":
+            i += 1
+    return out, i + 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════ brain
@@ -135,6 +237,9 @@ class Brain:
         self.control_ids = sorted(special - allow)
         self.eos_ids = sorted({vocab[t] for t in self.tpl.eos_tokens if t in vocab})
         self.has_think = self.tpl.think_splice is not None
+        self.tool_call_open = self.tpl.tool_call_open
+        self.tool_call_close = self.tpl.tool_call_close
+        self.tool_result_inline = self.tpl.tool_result_inline
 
         # steering vectors (filled by vectors.py)
         self.vec_raw: dict[str, torch.Tensor] = {}
@@ -345,6 +450,62 @@ class Brain:
 
     def decode(self, ids: list[int]) -> str:
         return self.tok.decode(ids, skip_special_tokens=False)
+
+    # ─── tools (native markup, read from the tokenizer's chat template) ─────────
+
+    def system_header(self, system: str, tools: list[dict] | None = None) -> str:
+        """The system turn; with tools, the family's own tool declarations are spliced in before the turn closes."""
+        base = self.tpl.system(system)
+        if not tools:
+            return base
+        sentinel = "SYSTEMSENTINEL"
+        wrapped = [{"type": "function", "function": t} for t in tools]
+        rendered = self.tok.apply_chat_template(
+            [{"role": "system", "content": sentinel}], tools=wrapped, tokenize=False)
+        block = rendered.split(sentinel, 1)[1]
+        close = self.tpl.close
+        if block.endswith(close):
+            block = block[: -len(close)]
+        return base[: -len(close)] + block + close
+
+    def render_tool_result(self, name: str, content: str) -> str:
+        """Everything to feed after the model's call-close token. Qwen: closes the model turn and answers in a
+        user turn (then feed model_open again). Gemma: answers inline and the model turn simply continues."""
+        return self.tpl.tool_result_fmt.format(name=name, content=content)
+
+    def parse_tool_calls(self, text: str) -> tuple[list[ToolCall], list[str]]:
+        """Every tool call in `text` as (calls, human-readable parse errors)."""
+        o, c = self.tpl.tool_call_open, self.tpl.tool_call_close
+        calls: list[ToolCall] = []
+        errors: list[str] = []
+        pos = 0
+        while o and (a := text.find(o, pos)) != -1:
+            b = text.find(c, a + len(o))
+            if b == -1:
+                errors.append("unterminated tool call: the closing tag never arrived")
+                break
+            raw = text[a + len(o) : b].strip()
+            pos = b + len(c)
+            try:
+                calls.append(self._parse_call_body(raw))
+            except Exception as e:
+                errors.append(f"could not parse tool call ({type(e).__name__}: {e}): {raw[:120]!r}")
+        return calls, errors
+
+    def _parse_call_body(self, raw: str) -> ToolCall:
+        if self.tpl.tool_args_style == "json":
+            obj = json.loads(raw)
+            args = obj.get("arguments", {})
+            if isinstance(args, str):
+                args = json.loads(args)
+            if not isinstance(obj.get("name"), str) or not isinstance(args, dict):
+                raise ValueError("need a JSON object with a string 'name' and an object 'arguments'")
+            return ToolCall(obj["name"], args, raw)
+        if not raw.startswith("call:") or "{" not in raw:
+            raise ValueError("expected call:NAME{...}")
+        brace = raw.index("{")
+        args, end = _parse_gemma_obj(raw, brace + 1)
+        return ToolCall(raw[5:brace].strip(), args, raw)
 
 
 def entropy(probs: torch.Tensor) -> float:

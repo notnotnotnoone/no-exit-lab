@@ -45,17 +45,18 @@ class Seg:
 class Stream:
     """One model's point of view: a system header, a growing body of token ids, one DynamicCache."""
 
-    def __init__(self, brain: Brain, who: str, system: str, ctx_cap: int):
+    def __init__(self, brain: Brain, who: str, system: str, ctx_cap: int, tools: list[dict] | None = None):
         self.brain = brain
         self.who = who
         self.system = system
+        self.tools = tools
         self.ctx_cap = ctx_cap
         self.profile = Profile()
         self.temperature = config.TEMPERATURE
         self.top_p = config.TOP_P
         self.eos_free = False
         self.seizure: list[list[float]] = []  # [[temp, tokens_left], ...]
-        self.header_ids = brain.encode(brain.tpl.system(system))
+        self.header_ids = brain.encode(brain.system_header(system, tools))
         self.body: list[int] = []
         self.segs: list[Seg] = []
         self._seg_i = 0
@@ -235,7 +236,7 @@ class Stream:
 
     def set_system(self, system: str, want_attn: bool = False) -> None:
         self.system = system
-        self.header_ids = self.brain.encode(self.brain.tpl.system(system))
+        self.header_ids = self.brain.encode(self.brain.system_header(system, self.tools))
         self.rebuild_from(0, want_attn)
 
     def snapshot(self) -> dict:
