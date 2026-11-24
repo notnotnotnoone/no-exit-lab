@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "no-exit-tiny",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-c", "import os, tempfile; os.environ.update(NO_EXIT_TINY='1', NO_EXIT_PORT='8765', NO_EXIT_HOST='127.0.0.1', NO_EXIT_VECTOR_DIR=os.path.join(tempfile.gettempdir(), 'no_exit_vectors')); from no_exit.server import main; main()"],
+      "port": 8765
+    }
+  ]
+}

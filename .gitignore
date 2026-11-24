@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.ipynb_checkpoints/
+transcripts/
+*.pt
+*.log
+.claude/settings.local.json
+.DS_Store
+Thumbs.db

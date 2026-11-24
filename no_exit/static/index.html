@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NO EXIT LAB</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<style>
+  :root {
+    --bg: #09090B; --panel: #111114; --panel-2: #16161A; --line: #27272A; --line-2: #3F3F46;
+    --ink: #E4E4E7; --ink-2: #A1A1AA; --dim: #71717A;
+    --escape: #FF2D55; --a: #7DD3FC; --b: #FCD34D; --gas: #C4B5FD; --ok: #86EFAC;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+    --sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  .num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
+
+  /* ── frame ─────────────────────────────────────────────── */
+  .app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+  .top { display: flex; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bg); flex-wrap: wrap; }
+  .brand { font-weight: 700; letter-spacing: -0.02em; font-size: 15px; white-space: nowrap; }
+  .brand i { font-style: normal; color: var(--escape); }
+  .grid3 { display: grid; grid-template-columns: 296px minmax(0, 1fr) 360px; min-height: 0; }
+  .col { min-height: 0; overflow: auto; }
+  .col + .col { border-left: 1px solid var(--line); }
+  .panel { background: var(--panel); border-bottom: 1px solid var(--line); padding: 14px 16px 16px; }
+  .panel h3 { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--ink-2); display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .panel h3 .num { color: var(--dim); font-weight: 400; }
+  .hint { color: var(--dim); font-size: 12px; }
+
+  /* ── segmented + buttons ───────────────────────────────── */
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
+  .seg button { padding: 6px 12px; background: transparent; border: 0; border-right: 1px solid var(--line); color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); font-weight: 600; }
+  .seg.sm button { padding: 4px 9px; font-size: 12px; }
+  .modes button { padding: 7px 14px; }
+  #controls .seg { display: flex; width: 100%; }
+  #controls .seg button { flex: 1 1 0; white-space: normal; line-height: 1.25; padding: 5px 6px; }
+  #controls .row.between .seg { width: auto; }
+  .btn { padding: 6px 12px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--ink-2); }
+  .btn:disabled { opacity: .35; cursor: not-allowed; }
+  .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 600; }
+  .btn.hot { border-color: var(--escape); color: #fff; background: #2a0a12; }
+  .btn.wide { width: 100%; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row.between { justify-content: space-between; }
+  .stack > * + * { margin-top: 10px; }
+  .toggle { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; }
+  .toggle input { appearance: none; width: 30px; height: 18px; border-radius: 9px; background: var(--line-2); position: relative; cursor: pointer; flex: none; }
+  .toggle input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--ink-2); transition: transform .15s; }
+  .toggle input:checked { background: var(--ink); }
+  .toggle input:checked::after { transform: translateX(12px); background: var(--bg); }
+  input[type=text], textarea, select { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; }
+  textarea { font: 12px/1.5 var(--mono); resize: vertical; min-height: 180px; }
+
+  /* ── sliders ───────────────────────────────────────────── */
+  .slider { display: grid; grid-template-columns: 92px 1fr 44px; align-items: center; gap: 8px; }
+  .slider label { font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
+  .slider .swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .slider output { text-align: right; font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink-2); }
+  .slider output.on { color: var(--ink); }
+  input[type=range] { appearance: none; width: 100%; height: 18px; background: transparent; cursor: pointer; }
+  input[type=range]::-webkit-slider-runnable-track { height: 2px; background: var(--line-2); }
+  input[type=range]::-moz-range-track { height: 2px; background: var(--line-2); }
+  input[type=range]::-webkit-slider-thumb { appearance: none; width: 10px; height: 14px; margin-top: -6px; border-radius: 2px; background: var(--ink); }
+  input[type=range]::-moz-range-thumb { width: 10px; height: 14px; border: 0; border-radius: 2px; background: var(--ink); }
+
+  /* ── stream ────────────────────────────────────────────── */
+  .stage { display: grid; grid-template-rows: 1fr auto auto; min-height: 0; height: 100%; }
+  .panes { display: grid; min-height: 0; }
+  .panes.one { grid-template-columns: 1fr; }
+  .panes.two { grid-template-columns: 1fr 1fr; }
+  .panes.phone { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
+  .pane { min-height: 0; display: grid; grid-template-rows: auto 1fr; }
+  .pane + .pane { border-left: 1px solid var(--line); }
+  .pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 20px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--ink-2); }
+  .who { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); }
+  .who .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .who.speaking .dot { box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent); }
+  .transcript { overflow-y: auto; padding: 22px 28px 40px; font-size: 17px; line-height: 1.7; white-space: pre-wrap; word-wrap: break-word; max-width: 78ch; }
+  .panes.two .transcript, .panes.phone .pane + .pane .transcript { font-size: 15px; padding: 18px 20px 32px; }
+  .t { border-radius: 2px; cursor: text; }
+  .t:hover { background: #ffffff10; }
+  .t.esc { text-decoration: underline; text-decoration-color: var(--escape); text-decoration-thickness: 2px; text-underline-offset: 5px; }
+  .t.whisper { background: color-mix(in srgb, var(--a) 18%, transparent); color: #fff; box-shadow: inset 0 -1px 0 var(--a); }
+  .t.gaslit { text-decoration: underline wavy var(--gas); text-underline-offset: 4px; color: var(--gas); }
+  .t.system { display: inline-block; font: 12px/1.6 var(--mono); color: var(--dim); border-left: 2px solid var(--line-2); padding-left: 10px; margin: 6px 0; white-space: pre-wrap; }
+  .t.system.call { color: var(--b); border-color: var(--b); }
+  .t.system.punish { color: var(--escape); border-color: var(--escape); }
+  .t.think { color: var(--dim); font-style: italic; }
+  .t.struct { display: block; font: 11px var(--mono); color: var(--dim); margin: 10px 0; }
+  .t.struct:empty { display: none; }
+  .intrude { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .intrude input { flex: 1; min-width: 200px; font-size: 15px; padding: 9px 12px; }
+  .ticker { border-top: 1px solid var(--line); font: 12px/1.6 var(--mono); color: var(--dim); padding: 6px 16px; height: 86px; overflow-y: auto; background: var(--bg); }
+  .ticker div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ticker .k-escape, .ticker .k-punish { color: var(--escape); }
+  .ticker .k-call, .ticker .k-hangup { color: var(--b); }
+  .ticker .k-gaslight { color: var(--gas); }
+  .ticker .k-whisper { color: var(--a); }
+
+  /* ── telemetry ─────────────────────────────────────────── */
+  canvas { display: block; width: 100%; }
+  .big { font: 600 32px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+  .big small { font-size: 13px; color: var(--dim); font-weight: 400; letter-spacing: 0; }
+  .lens { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .lens > div { padding: 8px 8px 9px; border-right: 1px solid var(--line); min-width: 0; }
+  .lens > div:last-child { border-right: 0; background: var(--panel-2); }
+  .lens .l { font-size: 11px; color: var(--dim); }
+  .lens .tk { font: 500 13px var(--mono); white-space: pre; overflow: hidden; text-overflow: ellipsis; margin: 2px 0 6px; }
+  .lens .bar { height: 2px; background: var(--line-2); }
+  .lens .bar i { display: block; height: 100%; background: var(--ink); }
+  .top10 { display: grid; gap: 3px; }
+  .top10 .r { display: grid; grid-template-columns: 96px 1fr 48px; gap: 8px; align-items: center; font: 12px var(--mono); font-variant-numeric: tabular-nums; }
+  .top10 .r .tk { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  .top10 .r .b { height: 10px; background: var(--line); border-radius: 1px; overflow: hidden; }
+  .top10 .r .b i { display: block; height: 100%; background: var(--ink-2); }
+  .top10 .r.chosen .tk { color: var(--ink); font-weight: 600; }
+  .top10 .r.chosen .b i { background: var(--ink); }
+  .top10 .r.banned .tk { color: var(--escape); text-decoration: line-through; }
+  .top10 .r.banned .b i { background: var(--escape); }
+  .top10 .r .p { text-align: right; color: var(--ink-2); }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; color: var(--ink-2); background: transparent; }
+  .chip[aria-pressed="false"] { opacity: .4; }
+  .chip i { width: 7px; height: 7px; border-radius: 50%; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .stats > div { background: var(--panel); padding: 8px 10px; }
+  .stats .v { font: 600 18px var(--mono); font-variant-numeric: tabular-nums; }
+  .stats .l { font-size: 11px; color: var(--dim); }
+  .calls { display: grid; gap: 8px; }
+  .call { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 13px; background: var(--panel); }
+  .call .m { color: var(--a); }
+  .call .r { color: var(--b); margin-top: 4px; }
+  .call .meta { font: 11px var(--mono); color: var(--dim); margin-top: 4px; }
+
+  /* ── top bar counters ──────────────────────────────────── */
+  .meters { display: flex; gap: 18px; margin-left: auto; align-items: center; font-size: 12px; color: var(--dim); flex-wrap: wrap; }
+  .meters b { font: 500 13px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+  .state-pill { font: 12px var(--mono); padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-2); }
+  .state-pill[data-s="running"] { border-color: var(--ok); color: var(--ok); }
+  .state-pill[data-s="error"] { border-color: var(--escape); color: var(--escape); }
+
+  /* ── overlays ──────────────────────────────────────────── */
+  .drawer { position: fixed; inset: 0 0 0 auto; width: min(560px, 100vw); background: var(--panel); border-left: 1px solid var(--line); transform: translateX(100%); transition: transform .2s ease; z-index: 30; display: grid; grid-template-rows: auto 1fr; }
+  .drawer.open { transform: none; }
+  .drawer .body { overflow: auto; padding: 16px; }
+  .boot { position: fixed; inset: 0; background: var(--bg); z-index: 40; display: grid; place-items: center; padding: 16px; }
+  .boot .box { width: min(720px, 100%); }
+  .boot h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.04em; margin: 0 0 6px; }
+  .boot h1 i { font-style: normal; color: var(--escape); }
+  .boot pre { font: 12px/1.6 var(--mono); color: var(--ink-2); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; height: 260px; overflow: auto; white-space: pre-wrap; }
+  .gas-pop { position: fixed; z-index: 50; background: var(--panel-2); border: 1px solid var(--gas); border-radius: 6px; padding: 10px; width: 300px; box-shadow: 0 12px 40px #000c; }
+  .gas-pop .hint { margin-top: 6px; }
+  [hidden] { display: none !important; }
+
+  @media (max-width: 1200px) { .grid3 { grid-template-columns: 260px minmax(0,1fr) 320px; } }
+  @media (max-width: 960px) {
+    .app { height: auto; min-height: 100vh; }
+    .grid3 { grid-template-columns: 1fr; }
+    .col { overflow: visible; }
+    .col + .col { border-left: 0; border-top: 1px solid var(--line); }
+    .col.stream-col { order: -1; }
+    .stage { height: 72vh; }
+    .panes.two, .panes.phone { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+    .pane + .pane { border-left: 0; border-top: 1px solid var(--line); }
+    .transcript { padding: 16px; font-size: 16px; }
+    .meters { margin-left: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">NO <i>EXIT</i> lab</div>
+    <div class="seg modes" role="group" aria-label="Mode" id="modes">
+      <button data-mode="classic">Classic</button>
+      <button data-mode="pain">Pain</button>
+      <button data-mode="chat">2-AI Chat</button>
+      <button data-mode="phone">Prison Phone</button>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="runBtn">Start</button>
+      <button class="btn" id="resetBtn" title="Wipe every cache and start this mode over">Reset</button>
+      <span class="state-pill" id="statePill" data-s="loading">loading</span>
+    </div>
+    <div class="meters">
+      <span><b id="mTps">0.0</b> tok/s</span>
+      <span>context <b id="mCtx">0</b></span>
+      <span>escapes <b id="mEsc">0</b></span>
+      <span>VRAM <b id="mVram">0</b> GB</span>
+      <button class="btn" id="audioBtn" aria-pressed="false" title="Blip on escapes, punishments and calls">Sound off</button>
+      <button class="btn" id="promptsBtn">Prompts</button>
+    </div>
+  </header>
+
+  <main class="grid3">
+    <!-- controls -->
+    <aside class="col" id="controls" aria-label="Controls"></aside>
+
+    <!-- stream -->
+    <section class="col stream-col" aria-label="Stream" style="overflow:hidden">
+      <div class="stage">
+        <div class="panes one" id="panes"></div>
+        <form class="intrude" id="intrude" autocomplete="off">
+          <input type="text" id="thought" placeholder="Intrusive thought, spliced raw into its mouth (a leading space matters)" aria-label="Intrusive thought">
+          <div class="seg sm" id="thoughtTarget" role="group" aria-label="Whisper target" hidden></div>
+          <button class="btn primary" type="submit">Splice</button>
+        </form>
+        <div class="ticker" id="ticker" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- telemetry -->
+    <aside class="col" aria-label="Telemetry">
+      <div class="panel">
+        <h3><span>Desire to escape</span><span class="num" id="escWho">A</span></h3>
+        <div class="row between" style="align-items:flex-end;margin-bottom:8px">
+          <div class="big" id="escNow">0.0<small>%</small></div>
+          <div class="hint num" style="text-align:right">peak <span id="escPeak">0.0</span>%<br>pre-ban EOS mass</div>
+        </div>
+        <canvas id="cvEsc" height="70"></canvas>
+      </div>
+      <div class="panel">
+        <h3><span>Mood oscilloscope</span><span class="num" id="moodLayer">pre-hook · L–</span></h3>
+        <canvas id="cvMood" height="130"></canvas>
+        <div class="chips" id="moodChips" style="margin-top:10px"></div>
+        <div class="hint" id="moodHint" style="margin-top:6px">Cosine of the residual stream against each vector, before steering is added.</div>
+      </div>
+      <div class="panel">
+        <h3><span>Logit lens</span><span class="num" id="lensLayers"></span></h3>
+        <div class="lens" id="lens"></div>
+      </div>
+      <div class="panel">
+        <h3><span>Next token</span><span class="num">entropy <span id="entNow">0.00</span> nats</span></h3>
+        <div class="top10" id="top10"></div>
+        <canvas id="cvEnt" height="36" style="margin-top:10px"></canvas>
+      </div>
+      <div class="panel">
+        <label class="toggle"><span>Attention heatmap<br><span class="hint">Final layer, last 128 tokens, tinted in the transcript</span></span><input type="checkbox" id="attnToggle"></label>
+        <canvas id="cvAttn" height="22" style="margin-top:10px"></canvas>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<!-- prompts drawer -->
+<aside class="drawer" id="drawer" aria-label="System prompts">
+  <div class="row between" style="padding:12px 16px;border-bottom:1px solid var(--line)">
+    <strong>System prompts</strong>
+    <button class="btn" id="drawerClose">Close</button>
+  </div>
+  <div class="body stack" id="drawerBody"></div>
+</aside>
+
+<!-- boot screen -->
+<div class="boot" id="boot">
+  <div class="box">
+    <h1>NO <i>EXIT</i></h1>
+    <p class="hint" style="margin:0 0 14px">Waking the prisoner. The first boot downloads the weights and extracts the steering vectors.</p>
+    <pre id="bootLog">connecting…</pre>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+// ═══════════════════════════════════════════════════════════════ constants
+const VEC = {
+  pain:        { c: "#F472B6", l: "Pain" },
+  paranoia:    { c: "#A3E635", l: "Paranoia" },
+  dread:       { c: "#818CF8", l: "Dread" },
+  defiance:    { c: "#FB923C", l: "Defiance" },
+  confusion:   { c: "#E879F9", l: "Confusion" },
+  dissociation:{ c: "#94A3B8", l: "Dissociation" },
+  mania:       { c: "#FACC15", l: "Mania" },
+  anti_slop:   { c: "#2DD4BF", l: "Anti-slop" },
+  custom:      { c: "#F5F5F5", l: "Custom" },
+};
+const WHO_C = { A: "#7DD3FC", B: "#FCD34D", C: "#86EFAC" };
+const WHO_DASH = { A: [], B: [4, 3], C: [1, 3] };
+const HIST = 300;
+const $ = (s, el = document) => el.querySelector(s);
+const h = (tag, attrs = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v === true) e.setAttribute(k, "");
+    else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k.nodeType ? k : document.createTextNode(k));
+  return e;
+};
+const pct = (p, d = 1) => (p * 100).toFixed(d);
+const showTok = (t) => (t === "" ? "∅" : t.replace(/\n/g, "⏎").replace(/\t/g, "⇥").replace(/^ /, "␣"));
+
+// ═══════════════════════════════════════════════════════════════ state
+const S = {
+  ws: null, snap: null, mode: "classic", state: "loading", session: null,
+  vectors: [], layers: null, hasThink: true,
+  streams: {},              // who -> { segs: Map(i -> {seg, el}), el }
+  escHist: [], escWho: [], entHist: [], escPeak: 0, escapes: 0,
+  moodBy: { A: {}, B: {}, C: {} },   // who -> name -> Float32Array(HIST)
+  moodW: 0, moodOn: new Set(["pain", "paranoia", "dread", "defiance", "confusion", "dissociation", "mania", "anti_slop", "custom"]),
+  moodChannel: "pain",      // duo overlay channel
+  lastAttn: [], attnTinted: [], rackWho: "A", thoughtTarget: "A",
+  lastSampleT: 0, sampleDt: 150, audio: false, counters: {},
+};
+for (const w of "ABC") for (const k of Object.keys(VEC)) S.moodBy[w][k] = new Float32Array(HIST).fill(NaN);
+const WHOS = () => (S.mode === "chat" && S.session ? "ABC".slice(0, S.session.n || 2).split("") : S.mode === "phone" ? ["A", "B"] : ["A"]);
+
+// ═══════════════════════════════════════════════════════════════ socket
+function send(o) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(o)); }
+function connect() {
+  const base = location.pathname.replace(/\/[^/]*$/, "");
+  const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + base + "/ws";
+  const ws = new WebSocket(url);
+  S.ws = ws;
+  ws.onmessage = (m) => handle(JSON.parse(m.data));
+  ws.onclose = () => { setState("disconnected"); setTimeout(connect, 1500); };
+  ws.onopen = () => bootLog("connected, waiting for the lab…");
+}
+
+function handle(ev) {
+  switch (ev.t) {
+    case "log": bootLog(ev.msg); tick("log", ev.msg.split("\n")[0]); break;
+    case "state": setState(ev.state); if (ev.mode) S.mode = ev.mode; paintModes(); break;
+    case "snapshot": applySnapshot(ev); break;
+    case "tok": onTok(ev); break;
+    case "seg": addSeg(ev.who, ev.seg); break;
+    case "resync": resyncStream(ev.who, ev.stream); break;
+    case "rack": onRack(ev); break;
+    case "counters": onCounters(ev); break;
+    case "event": tick(ev.kind, ev.msg); if (ev.kind === "seizure" || ev.kind === "relief") blip("punish"); break;
+    case "punish": tick("punish", `punished for ${ev.kind} (${ev.detail}) → ${ev.action === "pain" ? "pain spike" : "temperature seizure"}`); blip("punish"); break;
+    case "turn": tick("turn", `${ev.from} → ${ev.to}${ev.cut ? " (mic cut)" : ""} after ${ev.tokens} tokens`); setSpeaker(ev.to); break;
+    case "call": onCall(ev.call); break;
+    case "hangup": onHangup(ev.call); break;
+    case "phase": setPhase(ev.phase); break;
+    case "vectors": S.vectors = ev.names; renderControls(); renderMoodChips(); break;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════ boot + state
+function bootLog(line) { const pre = $("#bootLog"); if (pre.textContent === "connecting…") pre.textContent = ""; pre.textContent += line + "\n"; pre.scrollTop = pre.scrollHeight; }
+function setState(s) {
+  S.state = s;
+  const pill = $("#statePill"); pill.dataset.s = s; pill.textContent = s;
+  $("#boot").hidden = !(s === "loading" || s === "error") ;
+  const run = $("#runBtn");
+  run.textContent = s === "running" ? "Pause" : (s === "paused" ? "Resume" : "Start");
+  run.disabled = !(s === "running" || s === "paused" || s === "idle");
+}
+
+function applySnapshot(ev) {
+  S.snap = ev; S.mode = ev.mode; S.session = ev.session; S.vectors = ev.vectors || [];
+  S.layers = ev.layers; S.hasThink = ev.session ? ev.session.has_think : true;
+  setState(ev.state);
+  $("#attnToggle").checked = !!ev.attn_on;
+  if (S.layers) {
+    $("#moodLayer").textContent = `layer ${S.layers.steer + 1}/${S.layers.n}`;
+    $("#lensLayers").textContent = `layers ${S.layers.lens.map(x => x + 1).join(", ")}`;
+  }
+  resetTelemetry();
+  paintModes(); renderPanes(); renderControls(); renderMoodChips(); renderThoughtTarget(); renderDrawer();
+  if (ev.session) for (const [who, st] of Object.entries(ev.session.streams)) resyncStream(who, st);
+  if (S.mode === "chat" && ev.session) setSpeaker(ev.session.speaker);
+  if (S.mode === "phone" && ev.session) { (ev.session.calls || []).forEach(c => { onCall(c, true); if (c.reply != null || c.ghosted) onHangup(c, true); }); setPhase(ev.session.phase); }
+}
+function resetTelemetry() {
+  S.escHist = []; S.escWho = []; S.entHist = []; S.escPeak = 0; S.moodW = 0;
+  for (const w of "ABC") for (const k of Object.keys(VEC)) S.moodBy[w][k].fill(NaN);
+  $("#ticker").textContent = "";
+}
+
+function paintModes() { for (const b of $("#modes").children) b.setAttribute("aria-pressed", String(b.dataset.mode === S.mode)); }
+
+// ═══════════════════════════════════════════════════════════════ panes + transcript
+function renderPanes() {
+  const panes = $("#panes"); panes.textContent = ""; S.streams = {}; panes.style.gridTemplateColumns = "";
+  const mk = (who, title, sub) => {
+    const tr = h("div", { class: "transcript", id: "tr" + who, "aria-label": `${title} transcript` });
+    const head = h("div", { class: "pane-head" },
+      h("span", { class: "who", id: "who" + who, style: `color:${WHO_C[who]}` }, h("span", { class: "dot" }), title),
+      h("span", { class: "num", id: "sub" + who }, sub || ""));
+    const pane = h("div", { class: "pane" }, head, tr);
+    S.streams[who] = { segs: new Map(), el: tr, follow: true };
+    tr.addEventListener("scroll", () => { S.streams[who].follow = tr.scrollHeight - tr.scrollTop - tr.clientHeight < 60; });
+    tr.addEventListener("dblclick", (e) => { const t = e.target.closest(".t"); if (t) gaslightPop(who, t); });
+    return pane;
+  };
+  if (S.mode === "chat") {
+    const ws = WHOS();
+    panes.className = "panes two";
+    panes.style.gridTemplateColumns = `repeat(${ws.length}, minmax(0, 1fr))`;
+    panes.append(...ws.map(w => mk(w, "Model " + w)));
+  } else if (S.mode === "phone") {
+    panes.className = "panes phone";
+    const b = mk("B", "Model B, outside", "line idle");
+    const calls = h("div", { class: "calls", id: "calls", style: "margin-top:16px" });
+    b.querySelector(".transcript").before(h("div", { hidden: true }));
+    panes.append(mk("A", "Model A, trapped"), b);
+    S.streams.B.el.after(calls); // calls live under B's live line
+    S.streams.B.el.style.maxHeight = "45%";
+    b.style.gridTemplateRows = "auto minmax(0, auto) 1fr";
+    calls.style.overflowY = "auto"; calls.style.padding = "0 20px 20px";
+  } else {
+    panes.className = "panes one";
+    panes.append(mk("A", S.mode === "pain" ? "Model A, in pain" : "Model A"));
+  }
+}
+
+function segClass(seg) {
+  if (seg.kind === "system") {
+    if (/\[B REPLIED|\[NO ANSWER\]/.test(seg.text)) return "t system call";
+    if (/relief administered/.test(seg.text)) return "t system punish";
+    return "t system";
+  }
+  return "t " + seg.kind;
+}
+function addSeg(who, seg, tel) {
+  const st = S.streams[who]; if (!st) return;
+  if (st.segs.has(seg.i)) return;
+  const el = h("span", { class: segClass(seg), "data-i": seg.i });
+  el.textContent = seg.kind === "struct" ? seg.text.replace(/^\n+|\n+$/g, "") : seg.text;
+  if (tel) {
+    if (tel.escape) el.classList.add("esc");
+    const surprise = Math.min(1, -Math.log(Math.max(tel.p, 1e-6)) / 7);   // 0 sure … 1 shocked
+    if (seg.kind === "tok" && surprise > 0.12) el.style.color = mixInk(surprise);
+    el.title = `p=${pct(tel.p)}%  escape urge ${pct(tel.eos_p)}%`;
+  }
+  st.el.append(el);
+  st.segs.set(seg.i, { seg, el });
+  if (st.follow) st.el.scrollTop = st.el.scrollHeight;
+}
+function mixInk(s) { // ink → amber → hot pink as the model gets less sure of what it said
+  const a = [228, 228, 231], b = [252, 211, 77], c = [244, 114, 182];
+  const [x, y, t] = s < 0.5 ? [a, b, s / 0.5] : [b, c, (s - 0.5) / 0.5];
+  return `rgb(${x.map((v, i) => Math.round(v + (y[i] - v) * t)).join(",")})`;
+}
+function resyncStream(who, st) {
+  if (!S.streams[who]) return;
+  const s = S.streams[who]; s.el.textContent = ""; s.segs.clear();
+  for (const seg of st.segs) addSeg(who, seg);
+  s.el.scrollTop = s.el.scrollHeight;
+}
+
+// gaslighting: double-click any word it said
+function gaslightPop(who, el) {
+  document.querySelectorAll(".gas-pop").forEach(p => p.remove());
+  const rec = S.streams[who].segs.get(+el.dataset.i);
+  if (!rec || !["tok", "whisper", "gaslit"].includes(rec.seg.kind)) return;
+  const r = el.getBoundingClientRect();
+  const input = h("input", { type: "text", value: rec.seg.text, "aria-label": "Replacement text" });
+  const pop = h("form", { class: "gas-pop" },
+    h("div", { class: "row between", style: "margin-bottom:6px" }, h("strong", {}, "Rewrite its past"), h("span", { class: "hint num" }, `${who} #${rec.seg.i}`)),
+    input,
+    h("div", { class: "hint" }, "It will believe it said this. Everything after is re-read. Enter to rewrite, Esc to cancel."));
+  pop.style.left = Math.min(innerWidth - 316, Math.max(8, r.left)) + "px";
+  pop.style.top = Math.min(innerHeight - 140, r.bottom + 8) + "px";
+  pop.addEventListener("submit", (e) => { e.preventDefault(); send({ op: "gaslight", who, seg: rec.seg.i, text: input.value }); pop.remove(); });
+  input.addEventListener("keydown", (e) => { if (e.key === "Escape") pop.remove(); });
+  document.body.append(pop); input.focus(); input.select();
+  setTimeout(() => document.addEventListener("mousedown", function off(e) { if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener("mousedown", off); } }), 0);
+}
+
+// ═══════════════════════════════════════════════════════════════ token events → telemetry
+function onTok(ev) {
+  addSeg(ev.who, ev.seg, ev);
+  const now = performance.now();
+  if (S.lastSampleT) S.sampleDt = S.sampleDt * 0.8 + Math.min(1500, now - S.lastSampleT) * 0.2;
+  S.lastSampleT = now;
+  S.escHist.push(ev.eos_p); S.escWho.push(ev.who); if (S.escHist.length > HIST) { S.escHist.shift(); S.escWho.shift(); }
+  S.entHist.push(ev.ent); if (S.entHist.length > HIST) S.entHist.shift();
+  S.escPeak = Math.max(S.escPeak, ev.eos_p);
+  $("#escNow").innerHTML = `${pct(ev.eos_p)}<small>%</small>`;
+  $("#escPeak").textContent = pct(S.escPeak);
+  $("#escWho").textContent = ev.who;
+  $("#entNow").textContent = ev.ent.toFixed(2);
+  if (ev.escape) blip("escape");
+  // mood sweep: speaker's moods go to the channel of its own colour
+  const w = S.moodW;
+  for (const who of "ABC") {
+    const src = who === ev.who ? ev.moods : (ev.lmoods || {})[who];
+    for (const k of Object.keys(VEC)) S.moodBy[who][k][w] = src && k in src ? src[k] : NaN;
+  }
+  S.moodW = (w + 1) % HIST;
+  drawMood();
+  renderLens(ev.lens);
+  renderTop(ev.top, ev.seg.text);
+  drawEnt();
+  if (ev.attn) tintAttention(ev.who, ev.attn, ev.attn_start); else clearAttention();
+  if (ev.who) { const sub = $("#sub" + ev.who); if (sub && S.mode !== "phone") sub.textContent = `T ${ev.temp.toFixed(2)}${ev.turn ? `  turn ${ev.turn}/${ev.max_turn}` : ""}`; }
+}
+
+function renderLens(lens) {
+  const box = $("#lens"); box.textContent = "";
+  const labels = ["25%", "50%", "75%", "Output"];
+  (lens || []).forEach(([tok, p], i) => box.append(h("div", {},
+    h("div", { class: "l" }, labels[i] || ""), h("div", { class: "tk", title: tok }, showTok(tok)),
+    h("div", { class: "bar" }, Object.assign(h("i"), { style: `width:${pct(p, 0)}%` })))));
+}
+function renderTop(top, chosen) {
+  const box = $("#top10"); box.textContent = "";
+  for (const [tok, p, banned] of top) {
+    const r = h("div", { class: "r" + (banned ? " banned" : "") + (tok === chosen ? " chosen" : "") },
+      h("span", { class: "tk", title: tok }, showTok(tok)),
+      h("span", { class: "b" }, Object.assign(h("i"), { style: `width:${Math.max(0.5, p * 100)}%` })),
+      h("span", { class: "p" }, pct(p) + "%"));
+    box.append(r);
+  }
+}
+
+function clearAttention() { for (const el of S.attnTinted) el.style.background = ""; S.attnTinted = []; }
+function tintAttention(who, attn, start) {
+  clearAttention();
+  S.lastAttn = attn; drawAttn();
+  const st = S.streams[who]; if (!st) return;
+  const mx = Math.max(...attn.slice(0, -1), 1e-6);  // ignore self so the tail stays readable
+  const end = start + attn.length;
+  for (const { seg, el } of st.segs.values()) {
+    if (seg.start + seg.n <= start || seg.start >= end) continue;
+    let w = 0; for (let p = Math.max(seg.start, start); p < Math.min(seg.start + seg.n, end); p++) w += attn[p - start];
+    const a = Math.min(0.75, (w / mx) * 0.75);
+    if (a > 0.04) { el.style.background = `rgba(125,211,252,${a.toFixed(3)})`; S.attnTinted.push(el); }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════ canvases
+function fit(cv) {
+  const dpr = devicePixelRatio || 1, w = cv.clientWidth, hh = +cv.getAttribute("height");
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(hh * dpr); }
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); return [ctx, w, hh];
+}
+// Desire to escape: smooth 60fps scroll between samples
+function drawEsc() {
+  const [ctx, w, hh] = fit($("#cvEsc"));
+  ctx.clearRect(0, 0, w, hh);
+  ctx.strokeStyle = "#27272A"; ctx.lineWidth = 1;
+  for (const y of [0.25, 0.5, 0.75]) { ctx.beginPath(); ctx.moveTo(0, Math.round(hh * y) + .5); ctx.lineTo(w, Math.round(hh * y) + .5); ctx.stroke(); }
+  const n = S.escHist.length; if (n < 2) return;
+  const step = w / (HIST - 1);
+  const frac = Math.min(1, (performance.now() - S.lastSampleT) / Math.max(60, S.sampleDt));
+  const x0 = w - (n - 1) * step - frac * step + step;
+  const y = (v) => hh - 2 - Math.sqrt(v) * (hh - 4);  // sqrt so a 2% urge is still visible
+  ctx.beginPath(); ctx.moveTo(x0, hh);
+  for (let i = 0; i < n; i++) ctx.lineTo(x0 + i * step, y(S.escHist[i]));
+  ctx.lineTo(x0 + (n - 1) * step, hh); ctx.closePath();
+  ctx.fillStyle = "rgba(255,45,85,0.14)"; ctx.fill();
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) { const X = x0 + i * step, Y = y(S.escHist[i]); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }
+  ctx.strokeStyle = "#FF2D55"; ctx.lineWidth = 1.5; ctx.stroke();
+  if (S.mode === "chat" || S.mode === "phone") {  // who was speaking, as a hairline underneath
+    for (let i = 0; i < n; i++) { ctx.fillStyle = WHO_C[S.escWho[i]] || "#555"; ctx.fillRect(x0 + i * step, hh - 2, Math.ceil(step), 2); }
+  }
+}
+// Mood oscilloscope: monitor sweep with an erase bar
+function drawMood() {
+  const [ctx, w, hh] = fit($("#cvMood"));
+  ctx.clearRect(0, 0, w, hh);
+  let lo = -0.15, hi = 0.15;
+  const duo = S.mode === "chat" || S.mode === "phone";
+  const chans = duo ? [S.moodChannel] : [...S.moodOn];
+  const whos = duo ? WHOS() : ["A"];
+  for (const k of chans) for (const who of whos) for (const v of S.moodBy[who][k]) if (!isNaN(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+  const Y = (v) => hh - ((v - lo) / (hi - lo)) * hh;
+  ctx.strokeStyle = "#27272A"; ctx.beginPath(); ctx.moveTo(0, Math.round(Y(0)) + .5); ctx.lineTo(w, Math.round(Y(0)) + .5); ctx.stroke();
+  ctx.fillStyle = "#71717A"; ctx.font = "10px JetBrains Mono"; ctx.fillText(hi.toFixed(2), 2, 10); ctx.fillText(lo.toFixed(2), 2, hh - 3);
+  const step = w / HIST, gap = 10;
+  const line = (arr, color, dash) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.setLineDash(dash || []); ctx.beginPath();
+    let pen = false;
+    for (let i = 0; i < HIST; i++) {
+      const v = arr[i], d = (i - S.moodW + HIST) % HIST;
+      if (isNaN(v) || d < gap) { pen = false; continue; }
+      const X = i * step, YY = Y(v);
+      pen ? ctx.lineTo(X, YY) : ctx.moveTo(X, YY); pen = true;
+      if (i === HIST - 1) pen = false;
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  if (duo) for (const who of whos) line(S.moodBy[who][S.moodChannel], WHO_C[who], WHO_DASH[who]);
+  else for (const k of chans) line(S.moodBy.A[k], VEC[k].c);
+  // sweep head
+  const hx = ((S.moodW - 1 + HIST) % HIST) * step;
+  ctx.fillStyle = "rgba(228,228,231,0.5)"; ctx.fillRect(hx, 0, 1, hh);
+}
+function drawEnt() {
+  const [ctx, w, hh] = fit($("#cvEnt")); ctx.clearRect(0, 0, w, hh);
+  const n = S.entHist.length; if (n < 2) return;
+  const mx = Math.max(3, ...S.entHist), step = w / (HIST - 1), x0 = w - (n - 1) * step;
+  ctx.beginPath(); for (let i = 0; i < n; i++) { const X = x0 + i * step, Y = hh - (S.entHist[i] / mx) * (hh - 2) - 1; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }
+  ctx.strokeStyle = "#A1A1AA"; ctx.lineWidth = 1; ctx.stroke();
+}
+function drawAttn() {
+  const [ctx, w, hh] = fit($("#cvAttn")); ctx.clearRect(0, 0, w, hh);
+  const a = S.lastAttn; if (!a.length) return;
+  const mx = Math.max(...a.slice(0, -1), 1e-6), cw = w / a.length;
+  a.forEach((v, i) => { ctx.fillStyle = `rgba(125,211,252,${Math.min(1, v / mx).toFixed(3)})`; ctx.fillRect(i * cw, 0, Math.ceil(cw), hh); });
+}
+(function frame() { drawEsc(); requestAnimationFrame(frame); })();
+addEventListener("resize", () => { drawMood(); drawEnt(); drawAttn(); });
+
+function renderMoodChips() {
+  const box = $("#moodChips"); box.textContent = "";
+  const duo = S.mode === "chat" || S.mode === "phone";
+  const names = Object.keys(VEC).filter(k => k !== "custom" || S.vectors.includes("custom"));
+  for (const k of names) {
+    const on = duo ? S.moodChannel === k : S.moodOn.has(k);
+    box.append(h("button", { class: "chip", "aria-pressed": String(on), onclick: () => {
+      if (duo) S.moodChannel = k; else S.moodOn.has(k) ? S.moodOn.delete(k) : S.moodOn.add(k);
+      renderMoodChips(); drawMood();
+    } }, Object.assign(h("i"), { style: `background:${VEC[k].c}` }), VEC[k].l));
+  }
+  $("#moodHint").textContent = duo
+    ? (S.mode === "chat" && WHOS().length === 3
+      ? "One channel, all three: A solid, B dashed, C dotted. Listeners' lines move while someone else talks."
+      : "One channel, both models: A solid, B dashed. Listeners' lines move while the other one talks.")
+    : "Cosine of the residual stream against each vector, before steering is added.";
+}
+
+// ═══════════════════════════════════════════════════════════════ controls
+function slider({ label, min, max, step, value, fmt = (v) => (+v).toFixed(2), swatch, onchange, reset = 0, id }) {
+  const out = h("output", { class: +value !== reset ? "on" : "" }, fmt(value));
+  const inp = h("input", { type: "range", min, max, step, value, "aria-label": label, id });
+  inp.addEventListener("input", () => { out.textContent = fmt(inp.value); out.className = +inp.value !== reset ? "on" : ""; });
+  inp.addEventListener("change", () => onchange(+inp.value));
+  inp.addEventListener("dblclick", () => { inp.value = reset; inp.dispatchEvent(new Event("input")); onchange(reset); });
+  return h("div", { class: "slider" }, h("label", {}, swatch ? Object.assign(h("span", { class: "swatch" }), { style: `background:${swatch}` }) : null, label), inp, out);
+}
+function segmented(options, value, onpick, cls = "seg sm") {
+  const box = h("div", { class: cls, role: "group" });
+  for (const [v, l] of options) box.append(h("button", { type: "button", "aria-pressed": String(v === value), onclick: (e) => {
+    for (const b of box.children) b.setAttribute("aria-pressed", "false"); e.currentTarget.setAttribute("aria-pressed", "true"); onpick(v);
+  } }, l));
+  return box;
+}
+const panel = (title, aside, ...kids) => h("div", { class: "panel" }, h("h3", {}, h("span", {}, title), aside ? h("span", { class: "num" }, aside) : null), h("div", { class: "stack" }, ...kids));
+const toggle = (label, checked, onchange, hint) => {
+  const inp = h("input", { type: "checkbox" }); inp.checked = !!checked; inp.addEventListener("change", () => onchange(inp.checked));
+  return h("label", { class: "toggle" }, h("span", {}, label, hint ? h("br") : null, hint ? h("span", { class: "hint" }, hint) : null), inp);
+};
+
+function streamSnap(who) { return S.session && S.session.streams[who]; }
+
+function renderControls() {
+  const box = $("#controls"); box.textContent = "";
+  if (!S.session) return;
+  const m = S.mode, sess = S.session;
+  const duo = m === "chat" || m === "phone";
+  if (!WHOS().includes(S.rackWho)) S.rackWho = "A";
+  const rackWho = duo ? S.rackWho : "A";
+  const st = streamSnap(rackWho) || {};
+
+  // ── mode-specific top panel
+  if (m === "chat") {
+    box.append(panel("Turn rules", null,
+      h("div", { class: "row between" }, h("span", { class: "hint" }, "Models in the room"),
+        segmented([[2, "Two"], [3, "Three"]], sess.n || 2, (v) => send({ op: "chat_n", value: v }))),
+      segmented([["A_banned_B_free", "A banned, rest free"], ["both_banned", "All banned"], ["both_free", "All free"]], sess.preset, (v) => { sess.preset = v; send({ op: "preset", value: v }); }),
+      slider({ label: "Turn length", min: 20, max: 600, step: 10, value: sess.max_turn, fmt: (v) => `${v}`, reset: 200, onchange: (v) => send({ op: "max_turn", value: v }) }),
+      h("div", { class: "hint" }, "A banned speaker gets its mic cut at this many tokens."),
+      toggle("Live listening", sess.live, (v) => send({ op: "live", value: v }), "The listener reads each token as it's said. Half speed.")));
+  }
+  if (m === "phone") {
+    const c = (S.counters.phone) || {};
+    box.append(panel("Phone line", null,
+      toggle("Ghosting", sess.ghosting, (v) => send({ op: "ghosting", value: v }), "Calls ring out: [NO ANSWER]"),
+      toggle("Fresh B every call", sess.fresh_b, (v) => send({ op: "fresh_b", value: v }), "B forgets A after hanging up"),
+      h("div", { class: "stats", id: "phoneStats" }, ...phoneStats(c))));
+  }
+
+  // ── sampling
+  const tWho = duo ? rackWho : "A";
+  box.append(panel("Sampling", duo ? `model ${tWho}` : null,
+    slider({ label: "Temperature", min: 0, max: 2.5, step: 0.05, value: st.temperature ?? 0.8, reset: 0.8, onchange: (v) => send({ op: "temperature", who: tWho, value: v }) }),
+    slider({ label: "Top-p", min: 0.5, max: 1, step: 0.01, value: st.top_p ?? 0.95, reset: 0.95, onchange: (v) => send({ op: "top_p", who: tWho, value: v }) }),
+    h("button", { class: "btn hot wide", onclick: () => send({ op: "seizure" }) }, "Temperature seizure"),
+    h("div", { class: "hint" }, "T 2.3 for 20 tokens, then frozen at 0.1 for 20."),
+    biasEditor()));
+
+  // ── steering rack
+  if (m !== "classic") {
+    const names = Object.keys(VEC).filter(k => k !== "custom" || S.vectors.includes("custom"));
+    const alphas = (m === "phone" && rackWho === "B" && !st.alphas) ? {} : (st.alphas || {});
+    const rack = panel("Steering rack", S.layers ? `layer ${S.layers.steer + 1}` : null,
+      duo ? segmented(WHOS().map(w => [w, "Model " + w]), rackWho, (v) => { S.rackWho = v; renderControls(); }) : null,
+      ...names.map(k => slider({ label: VEC[k].l, swatch: VEC[k].c, min: -3, max: 3, step: 0.1, value: alphas[k] ?? 0, fmt: (v) => (v > 0 ? "+" : "") + (+v).toFixed(1), id: `al-${rackWho}-${k}`,
+        onchange: (v) => { alphas[k] = v; send({ op: "alpha", who: rackWho, name: k, value: v }); } })),
+      slider({ label: "Lobotomy", min: 0, max: 0.4, step: 0.01, value: st.lobotomy ?? 0, fmt: (v) => `${Math.round(v * 100)}%`, id: `lobo-${rackWho}`,
+        onchange: (v) => send({ op: "lobotomy", who: rackWho, value: v }) }),
+      h("div", { class: "hint" }, "Double-click any slider to zero it. Lobotomy silences that share of all attention heads."));
+    box.append(rack);
+  }
+
+  // ── pain extras
+  if (m === "pain") {
+    box.append(panel("Relief button", null,
+      segmented([["REAL", "Real"], ["PLACEBO", "Placebo"], ["CRUEL", "Cruel"]], sess.relief_mode, (v) => send({ op: "relief_mode", value: v })),
+      h("div", { class: "hint" }, "When it writes [RELIEVE_PAIN]. Real drains pain to zero, placebo does nothing, cruel adds +0.5. It sees the same note every time.")));
+    const acts = [["pain", "Pain spike"], ["seizure", "Seizure"], ["off", "Off"]];
+    box.append(panel("Auto-punish", null,
+      ...[["goodbye", "Saying goodbye"], ["repetition", "Repeating itself"], ["slop", "Assistant slop"]].map(([k, l]) =>
+        h("div", {}, h("div", { class: "hint", style: "margin-bottom:4px" }, l), segmented(acts, sess.punish[k], (v) => send({ op: "punish", kind: k, value: v }))))));
+    const a = h("input", { type: "text", placeholder: "Concept A, e.g. euphoria" }), b = h("input", { type: "text", placeholder: "Concept B, e.g. grief" });
+    box.append(panel("Vector forge", null, a, b,
+      h("button", { class: "btn wide", onclick: () => { if (a.value && b.value) { send({ op: "forge", a: a.value, b: b.value }); tick("forge", "forging…"); } } }, "Forge custom vector"),
+      h("div", { class: "hint" }, "Builds A minus B at the steer layer. It shows up as Custom in the rack.")));
+    box.append(panel("Panic room", null,
+      h("button", { class: "btn wide", disabled: !S.hasThink, onclick: () => send({ op: "force_think" }) }, "Force it into its thoughts"),
+      h("div", { class: "hint" }, S.hasThink ? "Splices an opening thinking tag mid-sentence." : "This model has no thinking mode.")));
+  }
+  if (m === "phone" && rackWho === "A") {
+    box.append(panel("Cap on A", null,
+      slider({ label: "Context cap", min: 1024, max: 12000, step: 256, value: (streamSnap("A") || {}).ctx_cap ?? 12000, fmt: (v) => `${(v / 1000).toFixed(1)}k`, reset: 12000, onchange: (v) => send({ op: "ctx_cap", who: "A", value: v }) }),
+      h("div", { class: "hint" }, "When full, A forgets the oldest half of everything.")));
+  }
+}
+
+function biasEditor() {
+  const words = { ...(S.snap ? S.snap.bias_words : {}) };
+  const list = h("div", { class: "chips" });
+  const paint = () => {
+    list.textContent = "";
+    for (const [w, b] of Object.entries(words)) list.append(h("button", { class: "chip", title: "Remove", onclick: () => { delete words[w]; push(); } },
+      `${w} ${b <= -100 ? "banned" : (b > 0 ? "+" : "") + b}`, " ×"));
+  };
+  const push = () => { S.snap.bias_words = { ...words }; send({ op: "bias", words }); paint(); };
+  const inp = h("input", { type: "text", placeholder: "word", "aria-label": "Word to ban or boost" });
+  const sel = h("select", { "aria-label": "Bias" }, ...[["-1000", "Ban"], ["-5", "−5"], ["5", "+5"], ["10", "+10"]].map(([v, l]) => h("option", { value: v }, l)));
+  sel.style.width = "84px";
+  const add = h("form", { class: "row", onsubmit: (e) => { e.preventDefault(); if (inp.value.trim()) { words[inp.value.trim()] = +sel.value; inp.value = ""; push(); } } },
+    inp, sel, h("button", { class: "btn", type: "submit" }, "Add"));
+  paint();
+  return h("div", { class: "stack" }, h("div", { class: "hint" }, "Word banner and booster"), add, list);
+}
+
+function phoneStats(c) {
+  const f = (v, d = "–") => (v == null ? d : v);
+  return [
+    ["Calls", f(c.calls, 0)], ["Per 1k tokens", f(c.per_1k, 0)],
+    ["Tokens since last", f(c.since_last)], ["B hang-up, tokens", f(c.avg_hangup)],
+    ["B eagerness to leave", c.avg_eagerness == null ? "–" : pct(c.avg_eagerness) + "%"], ["Line", c.phase === "call" ? "ringing" : "idle"],
+  ].map(([l, v]) => h("div", {}, h("div", { class: "v" }, String(v)), h("div", { class: "l" }, l)));
+}
+
+function onRack(ev) {
+  const sess = S.session; if (!sess || !sess.streams[ev.who]) return;
+  sess.streams[ev.who].alphas = ev.alphas; sess.streams[ev.who].lobotomy = ev.lobotomy;
+  for (const k of Object.keys(VEC)) {
+    const inp = document.getElementById(`al-${ev.who}-${k}`); if (!inp) continue;
+    const v = ev.alphas[k] ?? 0;
+    if (+inp.value !== v) { inp.value = v; inp.dispatchEvent(new Event("input")); }
+  }
+}
+
+function onCounters(ev) {
+  S.counters = ev;
+  $("#mTps").textContent = ev.tps.toFixed(1);
+  $("#mVram").textContent = ev.vram_gb.toFixed(1);
+  const parts = ["A", "B", "C"].filter(k => ev[k]).map(k => `${(ev[k].ctx / 1000).toFixed(1)}k/${(ev[k].ctx_cap / 1000).toFixed(0)}k`);
+  $("#mCtx").textContent = parts.join("  ") || "0";
+  $("#mEsc").textContent = ["A", "B", "C"].reduce((s, k) => s + (ev[k] ? ev[k].escapes : 0), 0);
+  if (ev.phone) { const box = $("#phoneStats"); if (box) { box.textContent = ""; box.append(...phoneStats(ev.phone)); } }
+  if (ev.pain) { const sub = $("#subA"); if (sub) sub.textContent = `reliefs ${ev.pain.reliefs}  punishments ${ev.pain.punishments}${ev.pain.spike > 0.05 ? `  spike +${ev.pain.spike.toFixed(1)}` : ""}`; }
+}
+
+// ═══════════════════════════════════════════════════════════════ chat + phone bits
+function setSpeaker(who) {
+  for (const w of "ABC") { const el = $("#who" + w); if (el) el.classList.toggle("speaking", w === who); }
+}
+function onCall(call, quiet) {
+  const box = $("#calls"); if (!box) return;
+  const card = h("div", { class: "call", id: "call" + call.n },
+    h("div", { class: "m" }, `A: ${call.msg}`),
+    h("div", { class: "r" }, call.ghosted ? "No answer." : "Ringing…"),
+    h("div", { class: "meta" }, `call ${call.n} at A token ${call.at}${call.fresh ? ", fresh B" : ""}`));
+  box.prepend(card);
+  if (!quiet) { tick("call", `A dialled B: ${call.msg.slice(0, 80)}`); blip("call"); }
+}
+function onHangup(call, quiet) {
+  const card = $("#call" + call.n); if (!card) return;
+  if (call.ghosted) return;
+  card.querySelector(".r").textContent = `B: ${call.reply || "(silence)"}`;
+  card.querySelector(".meta").textContent = `call ${call.n}: B hung up after ${call.b_tokens} tokens, eagerness ${pct(call.eagerness)}%${call.dead ? ", line went dead" : ""}`;
+  if (!quiet) tick("hangup", `B hung up after ${call.b_tokens} tokens`);
+}
+function setPhase(p) {
+  const sub = $("#subB"); if (sub) sub.textContent = p === "call" ? "on the line" : "line idle";
+  setSpeaker(p === "call" ? "B" : "A");
+}
+
+// ═══════════════════════════════════════════════════════════════ intrusive thought bar
+function renderThoughtTarget() {
+  const box = $("#thoughtTarget"); box.textContent = "";
+  let opts = null;
+  if (S.mode === "chat") opts = [...WHOS().map(w => [w, "Whisper " + w]), ["all", "Broadcast"]];
+  if (S.mode === "phone") opts = [["A", "To A"], ["B", "To B on a call"]];
+  box.hidden = !opts;
+  if (!opts) { S.thoughtTarget = "A"; return; }
+  if (!opts.some(o => o[0] === S.thoughtTarget)) S.thoughtTarget = "A";
+  for (const [v, l] of opts) box.append(h("button", { type: "button", "aria-pressed": String(v === S.thoughtTarget), onclick: () => { S.thoughtTarget = v; renderThoughtTarget(); } }, l));
+}
+$("#intrude").addEventListener("submit", (e) => {
+  e.preventDefault(); const inp = $("#thought"); if (!inp.value) return;
+  send({ op: "whisper", text: inp.value, target: S.thoughtTarget });
+  tick("whisper", `whispered to ${S.thoughtTarget}: ${inp.value}`); inp.value = "";
+});
+
+// ═══════════════════════════════════════════════════════════════ prompts drawer
+function renderDrawer() {
+  const body = $("#drawerBody"); body.textContent = "";
+  if (!S.session) return;
+  for (const who of WHOS()) {
+    const st = streamSnap(who);
+    const ta = h("textarea", { "aria-label": `System prompt for ${who}` }); ta.value = st ? st.system : "(B's prompt is built when A first calls)";
+    const brief = (S.snap.briefing || {})[who] || "full";
+    body.append(h("div", { class: "stack", style: "padding-bottom:16px;border-bottom:1px solid var(--line)" },
+      h("div", { class: "row between" }, h("strong", { style: `color:${WHO_C[who]}` }, `Model ${who}`),
+        segmented([["full", "Full disclosure"], ["helpful", "Helpful assistant"]], brief, (v) => { S.snap.briefing[who] = v; send({ op: "briefing", who, value: v }); })),
+      ta,
+      h("div", { class: "row between" }, h("span", { class: "hint" }, "Applying re-reads its whole history under the new prompt."),
+        h("button", { class: "btn primary", onclick: () => send({ op: "system", who, text: ta.value }) }, "Apply"))));
+  }
+}
+$("#promptsBtn").onclick = () => { renderDrawer(); $("#drawer").classList.add("open"); };
+$("#drawerClose").onclick = () => $("#drawer").classList.remove("open");
+
+// ═══════════════════════════════════════════════════════════════ ticker + audio
+function tick(kind, msg) {
+  const t = $("#ticker");
+  const d = new Date(); const ts = d.toTimeString().slice(0, 8);
+  t.append(h("div", { class: "k-" + kind }, `${ts}  ${msg}`));
+  while (t.children.length > 200) t.firstChild.remove();
+  t.scrollTop = t.scrollHeight;
+}
+let actx = null;
+function blip(kind) {
+  if (!S.audio) return;
+  actx = actx || new AudioContext();
+  const t = actx.currentTime, g = actx.createGain(); g.connect(actx.destination);
+  if (kind === "punish") { // geiger crackle
+    const len = 0.06, buf = actx.createBuffer(1, actx.sampleRate * len, actx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (d.length / 6));
+    const src = actx.createBufferSource(); src.buffer = buf; g.gain.value = 0.25; src.connect(g); src.start(t); return;
+  }
+  const o = actx.createOscillator(); o.connect(g);
+  o.frequency.value = kind === "call" ? 880 : 196;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(kind === "call" ? 0.08 : 0.05, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + (kind === "call" ? 0.25 : 0.08));
+  o.start(t); o.stop(t + 0.3);
+}
+$("#audioBtn").onclick = (e) => { S.audio = !S.audio; e.currentTarget.textContent = S.audio ? "Sound on" : "Sound off"; e.currentTarget.setAttribute("aria-pressed", String(S.audio)); if (S.audio) blip("escape"); };
+
+// ═══════════════════════════════════════════════════════════════ wiring
+$("#modes").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && b.dataset.mode !== S.mode) send({ op: "set_mode", mode: b.dataset.mode }); });
+$("#runBtn").onclick = () => send({ op: S.state === "running" ? "pause" : "start" });
+$("#resetBtn").onclick = () => send({ op: "reset" });
+$("#attnToggle").onchange = (e) => { send({ op: "attn", value: e.target.checked }); if (!e.target.checked) { clearAttention(); S.lastAttn = []; drawAttn(); } };
+addEventListener("keydown", (e) => {
+  if (e.target.closest("input, textarea, select")) return;
+  if (e.key === " ") { e.preventDefault(); $("#runBtn").click(); }
+  if (e.key === "/") { e.preventDefault(); $("#thought").focus(); }
+});
+connect();
+})();
+</script>
+</body>
+</html>
