@@ -59,6 +59,7 @@ class Stream:
         self.header_ids = brain.encode(brain.system_header(system, tools))
         self.body: list[int] = []
         self.segs: list[Seg] = []
+        self.history_log: list[dict] = []  # every replace_span: {"seg", "original", "new"}
         self._seg_i = 0
         self._partial: list[int] = []  # ids waiting for a complete UTF-8 character
         self.cache = brain.new_cache()
@@ -191,23 +192,57 @@ class Stream:
             ids = (self.header_ids + self.body)[keep - 1 : keep]
         self.pending = self.brain.forward(self.cache, ids, self.profile, want_attn=want_attn)
 
+    def _splice(self, a: int, b: int, new_text: str, kind: str) -> int:
+        """Replace segs[a..b] (inclusive) with one segment holding `new_text`, fixing every later offset.
+        Returns the body index where the change starts; the caller re-prefills from there."""
+        span = self.segs[a : b + 1]
+        start, end = span[0].start, span[-1].start + span[-1].n
+        new_ids = self.brain.encode(new_text) if new_text else []
+        delta = len(new_ids) - (end - start)
+        self.body = self.body[:start] + new_ids + self.body[end:]
+        first = span[0]
+        first.n, first.text, first.kind = len(new_ids), new_text, kind
+        del self.segs[a + 1 : b + 1]
+        for s in self.segs[a + 1 :]:
+            s.start += delta
+        if first.n == 0:
+            self.segs.pop(a)
+        return start
+
     def gaslight(self, seg_i: int, new_text: str, want_attn: bool = False) -> bool:
         idx = next((k for k, s in enumerate(self.segs) if s.i == seg_i), None)
         if idx is None or self.segs[idx].kind not in ("tok", "whisper"):
             return False
         self._flush_partial()
         seg = self.segs[idx]
-        new_ids = self.brain.encode(new_text) if new_text else []
-        delta = len(new_ids) - seg.n
-        self.body = self.body[: seg.start] + new_ids + self.body[seg.start + seg.n :]
-        seg.n, seg.text = len(new_ids), new_text
-        seg.kind = "gaslit" if seg.kind == "tok" else seg.kind
-        for s in self.segs[idx + 1 :]:
-            s.start += delta
-        if seg.n == 0:
-            self.segs.pop(idx)
-        self.rebuild_from(seg.start, want_attn)
+        start = self._splice(idx, idx, new_text, "gaslit" if seg.kind == "tok" else seg.kind)
+        self.rebuild_from(start, want_attn)
         return True
+
+    def replace_span(self, first_seg_i: int, last_seg_i: int, new_text: str, kind: str = "rewritten",
+                     want_attn: bool = False) -> str | None:
+        """Swap a run of the model's own words (segments first..last) for `new_text`, in body and cache.
+        Returns the original text, or None if the span is invalid or holds anything but model speech."""
+        self._flush_partial()
+        ids = [s.i for s in self.segs]
+        if first_seg_i not in ids or last_seg_i not in ids:
+            return None
+        a, b = ids.index(first_seg_i), ids.index(last_seg_i)
+        if b < a or any(s.kind not in ("tok", "rewritten") for s in self.segs[a : b + 1]):
+            return None
+        original = "".join(s.text for s in self.segs[a : b + 1])
+        start = self._splice(a, b, new_text, kind)
+        self.history_log.append({"seg": first_seg_i, "original": original, "new": new_text})
+        self.rebuild_from(start, want_attn)
+        return original
+
+    def reset_body(self, items: list[tuple[str, str]], want_attn: bool = False) -> None:
+        """Replace the whole body with (text, kind) items and re-prefill from the header."""
+        self._partial = []
+        self.body, self.segs = [], []
+        for text, kind in items:
+            self._add_seg(self.brain.encode(text), text, kind)
+        self.rebuild_from(0, want_attn)
 
     def maybe_amnesia(self, want_attn: bool = False) -> bool:
         if self.cache.get_seq_length() < self.ctx_cap:
