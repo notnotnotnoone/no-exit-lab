@@ -280,6 +280,7 @@ class Stream:
             "who": self.who,
             "system": self.system,
             "segs": [asdict(s) for s in self.segs],
+            "history": [dict(h) for h in self.history_log],  # what each rewritten span said before
             "temperature": self.temperature,
             "top_p": self.top_p,
             "eos_free": self.eos_free,

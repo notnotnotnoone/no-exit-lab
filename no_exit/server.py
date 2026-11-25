@@ -87,7 +87,10 @@ class Hub:
             self.last_log = (self.last_log + [ev["msg"]])[-40:]
         if self.loop and self.q is not None:
             msg = json.dumps(ev, ensure_ascii=False, default=float)
-            self.loop.call_soon_threadsafe(self.q.put_nowait, msg)
+            try:
+                self.loop.call_soon_threadsafe(self.q.put_nowait, msg)
+            except RuntimeError:  # server shutting down: the GPU thread outlives the event loop
+                pass
 
     async def pump(self) -> None:
         assert self.q is not None

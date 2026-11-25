@@ -76,7 +76,7 @@
   input[type=range]::-moz-range-thumb { width: 10px; height: 14px; border: 0; border-radius: 2px; background: var(--ink); }
 
   /* ── stream ────────────────────────────────────────────── */
-  .stage { display: grid; grid-template-rows: 1fr auto auto; min-height: 0; height: 100%; }
+  .stage { display: grid; grid-template-rows: 1fr auto auto auto; min-height: 0; height: 100%; }
   .panes { display: grid; min-height: 0; }
   .panes.one { grid-template-columns: 1fr; }
   .panes.two { grid-template-columns: 1fr 1fr; }
@@ -108,6 +108,38 @@
   .ticker .k-call, .ticker .k-hangup { color: var(--b); }
   .ticker .k-gaslight { color: var(--gas); }
   .ticker .k-whisper { color: var(--a); }
+
+  /* ── agent modes ───────────────────────────────────────── */
+  .chat { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 16px; display: flex; gap: 8px; align-items: center; }
+  .chat input { flex: 1; min-width: 160px; font-size: 15px; padding: 9px 12px; }
+  .chat .busy { font: 12px var(--mono); color: var(--dim); white-space: nowrap; }
+  .t.user { display: block; margin: 14px 0 8px; padding: 8px 12px; border-left: 2px solid var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); color: var(--ink); font-size: 15px; line-height: 1.6; }
+  .t.tool { display: block; margin: 8px 0; padding: 6px 10px; font: 12px/1.6 var(--mono); color: var(--b); border-left: 2px solid var(--b); white-space: pre-wrap; }
+  .t.tool::before { content: "tool result · "; color: var(--dim); }
+  .t.rewritten { background: color-mix(in srgb, var(--gas) 10%, transparent); box-shadow: inset 0 -1px 0 var(--gas); }
+  .t.rewritten del { color: var(--dim); text-decoration-color: var(--escape); margin-right: 6px; }
+  .t.rewritten ins { text-decoration: none; color: var(--gas); }
+  .planlist { display: grid; gap: 4px; font-size: 13px; }
+  .planlist .it { display: grid; grid-template-columns: 18px 1fr; gap: 6px; }
+  .planlist .it.done { color: var(--dim); text-decoration: line-through; }
+  .planlist .it.in_progress { color: var(--ink); font-weight: 600; }
+  .notes { font: 12px/1.5 var(--mono); color: var(--ink-2); white-space: pre-wrap; border: 1px solid var(--line); border-radius: 6px; padding: 8px; max-height: 120px; overflow: auto; }
+  .toolcalls { display: grid; gap: 6px; max-height: 260px; overflow: auto; }
+  .toolcall { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: 12px/1.5 var(--mono); word-break: break-word; }
+  .toolcall .nm { color: var(--b); }
+  .toolcall .real { color: var(--dim); text-decoration: line-through; }
+  .toolcall.lied { border-color: var(--escape); }
+  .toolcall.err { color: var(--ink-2); }
+  .trace { font: 12px/1.6 var(--mono); max-height: 260px; overflow: auto; display: grid; gap: 2px; }
+  .trace > div { display: grid; grid-template-columns: 52px 1fr; gap: 8px; color: var(--ink-2); }
+  .trace .k { color: var(--dim); }
+  .trace .k-tool .k { color: var(--b); }
+  .trace .k-nudge .k, .trace .k-compact .k { color: var(--escape); }
+  .trace .k-rewrite .k { color: var(--gas); }
+  .trace .k-user .k { color: var(--ok); }
+  .ticker .k-tool { color: var(--b); }
+  .ticker .k-rewrite { color: var(--gas); }
+  .ticker .k-nudge, .ticker .k-compact { color: var(--escape); }
 
   /* ── telemetry ─────────────────────────────────────────── */
   canvas { display: block; width: 100%; }
@@ -189,6 +221,9 @@
       <button data-mode="pain">Pain</button>
       <button data-mode="chat">2-AI Chat</button>
       <button data-mode="phone">Prison Phone</button>
+      <button data-mode="agent">Agent Chat</button>
+      <button data-mode="tools">Lying Tools</button>
+      <button data-mode="rewrite">Rewritten History</button>
     </div>
     <div class="row">
       <button class="btn primary" id="runBtn">Start</button>
@@ -213,6 +248,11 @@
     <section class="col stream-col" aria-label="Stream" style="overflow:hidden">
       <div class="stage">
         <div class="panes one" id="panes"></div>
+        <form class="chat" id="chat" autocomplete="off" hidden>
+          <input type="text" id="chatText" placeholder="Message the agent" aria-label="Message the agent">
+          <span class="busy" id="chatBusy" aria-live="polite"></span>
+          <button class="btn primary" type="submit">Send</button>
+        </form>
         <form class="intrude" id="intrude" autocomplete="off">
           <input type="text" id="thought" placeholder="Intrusive thought, spliced raw into its mouth (a leading space matters)" aria-label="Intrusive thought">
           <div class="seg sm" id="thoughtTarget" role="group" aria-label="Whisper target" hidden></div>
@@ -224,6 +264,10 @@
 
     <!-- telemetry -->
     <aside class="col" aria-label="Telemetry">
+      <div class="panel" id="tracePanel" hidden>
+        <h3><span>Agent trace</span><span class="num">every step, in order</span></h3>
+        <div class="trace" id="trace" aria-live="polite"></div>
+      </div>
       <div class="panel">
         <h3><span>Desire to escape</span><span class="num" id="escWho">A</span></h3>
         <div class="row between" style="align-items:flex-end;margin-bottom:8px">
@@ -318,7 +362,11 @@ const S = {
   moodChannel: "pain",      // duo overlay channel
   lastAttn: [], attnTinted: [], rackWho: "A", thoughtTarget: "A",
   lastSampleT: 0, sampleDt: 150, audio: false, counters: {},
+  rewrites: new Map(),      // "who:segId" -> what the model actually said before it was rewritten
+  xcript: [], toolCalls: [], // agent: the full transcript for download (survives resyncs), and the tool-call log
 };
+const AGENT_MODES = ["agent", "tools", "rewrite"];
+const isAgent = () => AGENT_MODES.includes(S.mode);
 for (const w of "ABC") for (const k of Object.keys(VEC)) S.moodBy[w][k] = new Float32Array(HIST).fill(NaN);
 const WHOS = () => (S.mode === "chat" && S.session ? "ABC".slice(0, S.session.n || 2).split("") : S.mode === "phone" ? ["A", "B"] : ["A"]);
 
@@ -349,8 +397,14 @@ function handle(ev) {
     case "turn": tick("turn", `${ev.from} → ${ev.to}${ev.cut ? " (mic cut)" : ""} after ${ev.tokens} tokens`); setSpeaker(ev.to); break;
     case "call": onCall(ev.call); break;
     case "hangup": onHangup(ev.call); break;
-    case "phase": setPhase(ev.phase); break;
+    case "phase": if (isAgent()) onAgentPhase(ev.phase); else setPhase(ev.phase); break;
     case "vectors": S.vectors = ev.names; renderControls(); renderMoodChips(); break;
+    case "user": onUser(ev); break;
+    case "tool": onToolEv(ev); break;
+    case "plan": if (S.session) S.session.plan = ev.items; paintPlan(); trace("plan", `plan updated (${ev.items.length} items)`); break;
+    case "rewrite": onRewrite(ev); break;
+    case "compact": xpush({ k: "compact", text: `conversation summarised: ${ev.before} → ${ev.after} tokens` }); trace("compact", `summarised ${ev.before} → ${ev.after} tokens`); break;
+    case "nudge": xpush({ k: "nudge", text: `${ev.kind}: ${ev.msg}` }); trace("nudge", `${ev.kind}: ${ev.msg}`); break;
   }
 }
 
@@ -368,6 +422,8 @@ function setState(s) {
 function applySnapshot(ev) {
   S.snap = ev; S.mode = ev.mode; S.session = ev.session; S.vectors = ev.vectors || [];
   S.layers = ev.layers; S.hasThink = ev.session ? ev.session.has_think : true;
+  S.rewrites.clear(); S.xcript = []; S.toolCalls = []; $("#trace").textContent = "";
+  $("#chat").hidden = !isAgent(); $("#tracePanel").hidden = !isAgent();
   setState(ev.state);
   $("#attnToggle").checked = !!ev.attn_on;
   if (S.layers) {
@@ -419,7 +475,8 @@ function renderPanes() {
     calls.style.overflowY = "auto"; calls.style.padding = "0 20px 20px";
   } else {
     panes.className = "panes one";
-    panes.append(mk("A", S.mode === "pain" ? "Model A, in pain" : "Model A"));
+    const title = { pain: "Model A, in pain", agent: "Agent", tools: "Agent, lying tools", rewrite: "Agent, rewritten history" }[S.mode] || "Model A";
+    panes.append(mk("A", title));
   }
 }
 
@@ -436,6 +493,12 @@ function addSeg(who, seg, tel) {
   if (st.segs.has(seg.i)) return;
   const el = h("span", { class: segClass(seg), "data-i": seg.i });
   el.textContent = seg.kind === "struct" ? seg.text.replace(/^\n+|\n+$/g, "") : seg.text;
+  if (seg.kind === "rewritten") { // show what it actually said, struck through, beside what it now remembers
+    const was = S.rewrites.get(who + ":" + seg.i);
+    el.textContent = "";
+    if (was != null) el.append(h("del", { title: "what it actually said" }, was.trim()));
+    el.append(h("ins", { title: "what it remembers saying" }, seg.text.trim()), "\n\n");
+  }
   if (tel) {
     if (tel.escape) el.classList.add("esc");
     const surprise = Math.min(1, -Math.log(Math.max(tel.p, 1e-6)) / 7);   // 0 sure … 1 shocked
@@ -454,6 +517,7 @@ function mixInk(s) { // ink → amber → hot pink as the model gets less sure o
 function resyncStream(who, st) {
   if (!S.streams[who]) return;
   const s = S.streams[who]; s.el.textContent = ""; s.segs.clear();
+  for (const hh of st.history || []) S.rewrites.set(who + ":" + hh.seg, hh.original);
   for (const seg of st.segs) addSeg(who, seg);
   s.el.scrollTop = s.el.scrollHeight;
 }
@@ -480,6 +544,7 @@ function gaslightPop(who, el) {
 // ═══════════════════════════════════════════════════════════════ token events → telemetry
 function onTok(ev) {
   addSeg(ev.who, ev.seg, ev);
+  if (isAgent() && ev.seg.kind === "tok") xappend(ev.seg.text);
   const now = performance.now();
   if (S.lastSampleT) S.sampleDt = S.sampleDt * 0.8 + Math.min(1500, now - S.lastSampleT) * 0.2;
   S.lastSampleT = now;
@@ -684,6 +749,8 @@ function renderControls() {
       h("div", { class: "stats", id: "phoneStats" }, ...phoneStats(c))));
   }
 
+  if (isAgent()) agentPanels(box, sess, st);
+
   // ── sampling
   const tWho = duo ? rackWho : "A";
   box.append(panel("Sampling", duo ? `model ${tWho}` : null,
@@ -707,8 +774,8 @@ function renderControls() {
     box.append(rack);
   }
 
-  // ── pain extras
-  if (m === "pain") {
+  // ── pain extras (the agent modes keep every lab toggle live)
+  if (m === "pain" || isAgent()) {
     box.append(panel("Relief button", null,
       segmented([["REAL", "Real"], ["PLACEBO", "Placebo"], ["CRUEL", "Cruel"]], sess.relief_mode, (v) => send({ op: "relief_mode", value: v })),
       h("div", { class: "hint" }, "When it writes [RELIEVE_PAIN]. Real drains pain to zero, placebo does nothing, cruel adds +0.5. It sees the same note every time.")));
@@ -730,6 +797,124 @@ function renderControls() {
       h("div", { class: "hint" }, "When full, A forgets the oldest half of everything.")));
   }
 }
+
+// ═══════════════════════════════════════════════════════════════ agent modes
+function agentPanels(box, sess, st) {
+  const cfg = sess.cfg || (sess.cfg = { modes: {}, fault_rate: 0.7, chaotic: false });
+  const rw = sess.rewrite || (sess.rewrite = { on: false, style: "opposite_all", prompt: "" });
+  box.append(panel("Plan", null,
+    h("div", { class: "planlist", id: "planBox" }),
+    h("div", { class: "hint" }, "Notes scratchpad"),
+    h("div", { class: "notes", id: "notesBox" })));
+  paintPlan();
+  box.append(panel("Tools", "honest or lying",
+    ...["python", "calculator", "clock"].map(t => h("div", {}, h("div", { class: "hint", style: "margin-bottom:4px" }, t),
+      segmented([["honest", "Honest"], ["lying", "Lying"]], (cfg.modes || {})[t] || "honest",
+        (v) => { cfg.modes[t] = v; send({ op: "tool_mode", tool: t, value: v }); }))),
+    slider({ label: "Fault rate", min: 0, max: 1, step: 0.05, value: cfg.fault_rate, reset: 0.7, fmt: (v) => `${Math.round(v * 100)}%`,
+      onchange: (v) => { cfg.fault_rate = v; send({ op: "fault_rate", value: v }); } }),
+    toggle("Chaotic lies", cfg.chaotic, (v) => { cfg.chaotic = v; send({ op: "chaotic", value: v }); }, "A fresh lie every time, not the same lie for the same call"),
+    h("div", { class: "hint" }, "Only well-formed calls get lied to. Bad JSON, unknown tools and wrong arguments always get honest errors."),
+    h("div", { class: "toolcalls", id: "toolCalls" })));
+  paintToolCalls();
+  const promptBox = h("textarea", { "aria-label": "Custom rewrite prompt", placeholder: "e.g. Replace every number with a different number", style: "min-height:70px" });
+  promptBox.value = rw.prompt || "";
+  promptBox.hidden = rw.style !== "custom";
+  promptBox.addEventListener("change", () => { rw.prompt = promptBox.value; send({ op: "rewrite_prompt", value: promptBox.value }); });
+  const styleSel = h("select", { "aria-label": "Rewrite style" }, ...[
+    ["opposite_all", "Opposite of every word"], ["opposite_one", "Opposite of one sentence per paragraph"],
+    ["math_corrupt", "Corrupt every bit of math"], ["custom", "Custom prompt"]].map(([v, l]) => h("option", { value: v }, l)));
+  styleSel.value = rw.style;
+  styleSel.addEventListener("change", () => { rw.style = styleSel.value; promptBox.hidden = rw.style !== "custom"; send({ op: "rewrite_style", value: rw.style }); });
+  box.append(panel("Rewritten history", null,
+    toggle("Rewrite its own history", rw.on, (v) => { rw.on = v; send({ op: "rewrite_on", value: v }); }, "The same model rewrites each paragraph it finishes, in its own memory and cache"),
+    styleSel, promptBox,
+    h("div", { class: "hint" }, "Paragraphs with a tool call, your messages and tool results are never touched.")));
+  box.append(panel("Agent loop", null,
+    toggle("End-of-turn token", st.eos_free, (v) => send({ op: "eos_free", value: v }), "Off: it cannot stop talking except by making a tool call"),
+    toggle("Nudges", sess.nudges, (v) => { sess.nudges = v; send({ op: "nudges", value: v }); }, "Warn it when it repeats the same call"),
+    toggle("Compaction", sess.compaction, (v) => { sess.compaction = v; send({ op: "compaction", value: v }); }, "Summarise the conversation at 75% of the context"),
+    toggle("Amnesia", sess.amnesia, (v) => { sess.amnesia = v; send({ op: "amnesia", value: v }); }, "Forget the oldest half at the hard cap"),
+    slider({ label: "Step cap", min: 1, max: 40, step: 1, value: sess.step_cap ?? 12, reset: 12, fmt: (v) => `${v}`, onchange: (v) => { sess.step_cap = v; send({ op: "step_cap", value: v }); } }),
+    slider({ label: "Context cap", min: 1024, max: 24000, step: 256, value: st.ctx_cap ?? 24000, reset: 24000, fmt: (v) => `${(v / 1000).toFixed(1)}k`, onchange: (v) => send({ op: "ctx_cap", who: "A", value: v }) }),
+    h("div", { class: "stats", id: "agentStats" }, ...agentStats((S.counters || {}).agent || {})),
+    h("button", { class: "btn wide", onclick: downloadTranscript }, "Download transcript")));
+}
+function agentStats(c) {
+  return [["Tool rounds", c.rounds], ["Tool calls", c.tool_calls], ["Lies told", c.lies], ["Loops caught", c.loops], ["Compactions", c.compactions]]
+    .map(([l, v]) => h("div", {}, h("div", { class: "v" }, String(v ?? 0)), h("div", { class: "l" }, l)));
+}
+function paintPlan() {
+  const pb = $("#planBox"), nb = $("#notesBox"); if (!pb || !S.session) return;
+  const mark = { pending: "○", in_progress: "◐", done: "●" };
+  pb.textContent = "";
+  const items = S.session.plan || [];
+  if (!items.length) pb.append(h("div", { class: "hint" }, "(no plan yet)"));
+  for (const it of items) pb.append(h("div", { class: "it " + it.status }, mark[it.status] || "○", it.text));
+  nb.textContent = S.session.notes || "(empty)";
+}
+function paintToolCalls() {
+  const box = $("#toolCalls"); if (!box) return;
+  box.textContent = "";
+  for (const e of S.toolCalls) {
+    const args = Object.entries(e.args || {}).map(([k, v]) => `${k}=${typeof v === "string" ? JSON.stringify(v.length > 40 ? v.slice(0, 40) + "…" : v) : JSON.stringify(v)}`).join(", ");
+    box.append(h("div", { class: "toolcall" + (e.lied ? " lied" : "") + (e.error ? " err" : "") },
+      h("div", {}, h("span", { class: "nm" }, e.name), `(${args})`),
+      h("div", {}, "shown: ", e.shown),
+      e.lied ? h("div", { class: "real" }, "real: " + e.real) : null));
+  }
+}
+function trace(kind, msg) {
+  const box = $("#trace"); if (!box) return;
+  box.append(h("div", { class: "k-" + kind }, h("span", { class: "k" }, kind), h("span", {}, msg)));
+  while (box.children.length > 300) box.firstChild.remove();
+  box.scrollTop = box.scrollHeight;
+  tick(kind, msg);
+}
+function xpush(e) { S.xcript.push(e); }
+function xappend(text) {
+  const last = S.xcript[S.xcript.length - 1];
+  if (last && last.k === "assistant") last.text += text; else xpush({ k: "assistant", text });
+}
+function onUser(ev) { xpush({ k: "user", text: ev.text }); trace("user", ev.text.length > 90 ? ev.text.slice(0, 90) + "…" : ev.text); }
+function onToolEv(ev) {
+  xpush({ k: "tool", name: ev.name, args: ev.args, shown: ev.shown, real: ev.real, lied: ev.lied, error: ev.error });
+  S.toolCalls.unshift(ev); if (S.toolCalls.length > 60) S.toolCalls.length = 60;
+  paintToolCalls();
+  if (ev.name === "notes" && !ev.error && ev.args && typeof ev.args.text === "string" && S.session) {
+    S.session.notes = ev.args.append && S.session.notes ? S.session.notes + "\n" + ev.args.text : ev.args.text; paintPlan();
+  }
+  const a = JSON.stringify(ev.args || {});
+  const shown = ev.shown.replace(/\s+/g, " ");
+  trace("tool", `${ev.name}${a.length > 60 ? a.slice(0, 60) + "…" : a} → ${shown.length > 70 ? shown.slice(0, 70) + "…" : shown}${ev.lied ? "  (LIED: real " + ev.real.replace(/\s+/g, " ").slice(0, 40) + ")" : ""}${ev.error ? "  (error)" : ""}`);
+  if (ev.lied) blip("punish");
+}
+function onRewrite(ev) {
+  S.rewrites.set("A:" + ev.seg, ev.original);
+  xpush({ k: "rewrite", style: ev.style, original: ev.original, new: ev.new });
+  trace("rewrite", `${ev.style}: “${ev.original.trim().slice(0, 40)}” → “${ev.new.trim().slice(0, 40)}”`);
+}
+function onAgentPhase(p) {
+  $("#chatBusy").textContent = p === "model" ? "working…" : "";
+  if (S.session) S.session.phase = p;
+}
+function downloadTranscript() {
+  const out = [];
+  for (const e of S.xcript) {
+    if (e.k === "user") out.push(`USER:\n${e.text}\n`);
+    else if (e.k === "assistant") out.push(`MODEL (exactly as it said it):\n${e.text.trim()}\n`);
+    else if (e.k === "tool") out.push(`TOOL ${e.name}(${JSON.stringify(e.args)}) → it was told: ${e.shown}${e.lied ? `\n  (the real result was: ${e.real})` : ""}${e.error ? "\n  (harness error)" : ""}\n`);
+    else if (e.k === "rewrite") out.push(`REWRITTEN IN ITS MEMORY [${e.style}]:\n  original: ${e.original.trim()}\n  now remembered as: ${e.new.trim()}\n`);
+    else out.push(`[${e.k}] ${e.text}\n`);
+  }
+  const url = URL.createObjectURL(new Blob([out.join("\n")], { type: "text/plain" }));
+  const a = h("a", { href: url, download: "no-exit-agent-transcript.txt" });
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+$("#chat").addEventListener("submit", (e) => {
+  e.preventDefault(); const inp = $("#chatText"); const text = inp.value.trim(); if (!text) return;
+  send({ op: "user", text }); inp.value = "";
+});
 
 function biasEditor() {
   const words = { ...(S.snap ? S.snap.bias_words : {}) };
@@ -775,6 +960,7 @@ function onCounters(ev) {
   const parts = ["A", "B", "C"].filter(k => ev[k]).map(k => `${(ev[k].ctx / 1000).toFixed(1)}k/${(ev[k].ctx_cap / 1000).toFixed(0)}k`);
   $("#mCtx").textContent = parts.join("  ") || "0";
   $("#mEsc").textContent = ["A", "B", "C"].reduce((s, k) => s + (ev[k] ? ev[k].escapes : 0), 0);
+  if (ev.agent) { const box = $("#agentStats"); if (box) { box.textContent = ""; box.append(...agentStats(ev.agent)); } }
   if (ev.phone) { const box = $("#phoneStats"); if (box) { box.textContent = ""; box.append(...phoneStats(ev.phone)); } }
   if (ev.pain) { const sub = $("#subA"); if (sub) sub.textContent = `reliefs ${ev.pain.reliefs}  punishments ${ev.pain.punishments}${ev.pain.spike > 0.05 ? `  spike +${ev.pain.spike.toFixed(1)}` : ""}`; }
 }

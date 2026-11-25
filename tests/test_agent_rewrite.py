@@ -78,3 +78,10 @@ def test_custom_style_without_prompt_is_reported_not_fatal(brain):
     assert of_kind(ev, "rewrite") == []
     assert any(e["t"] == "event" and e["kind"] == "rewrite_error" for e in ev)
     assert "One." in body_text(brain, a)
+
+
+def test_snapshot_carries_the_originals(brain):
+    ev, s, a = ask(brain, ["One.\n\nTwo."])
+    hist = s.snapshot()["streams"]["A"]["history"]
+    assert [h["original"].strip() for h in hist] == ["One.", "Two."]
+    assert all("seg" in h and "new" in h for h in hist)
