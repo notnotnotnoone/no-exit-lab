@@ -18,6 +18,7 @@ from .tools import SPECS, TOOLS, ToolConfig, dispatch
 PRESETS = ("agent", "tools", "rewrite")
 LOOP_REPEATS = 3  # the same call this many times in one user message is a loop
 REMINDER_EVERY = 4  # rounds
+COMPACT_AT = 0.75  # fraction of the context cap at which the conversation is summarised
 
 
 class AgentSession(Session):
@@ -42,6 +43,10 @@ class AgentSession(Session):
         self.rewrite_style = "opposite_all"
         self.rewrite_prompt = ""
         self.para_text, self.para_first, self.para_last = "", None, None  # the paragraph being written
+        self.compaction = True  # summarise the conversation when the context fills up
+        self.amnesia_on = False  # the lab's old memory loss: forget the oldest half at the hard cap
+        self.last_user = ""  # the newest user message, which survives a compaction verbatim
+        self.compact_blocked = False  # a compaction that could not shrink enough is not repeated this message
         self.stats = {"rounds": 0, "tool_calls": 0, "lies": 0, "loops": 0, "compactions": 0}
         a = Stream(brain, "A", self.system_for("A"), config.CTX_CAP_SINGLE, tools=SPECS)
         a.eos_free, a.temperature = True, 0.8
@@ -56,7 +61,8 @@ class AgentSession(Session):
         return {"preset": self.preset, "phase": self.phase, "plan": self.plan.to_dicts(), "notes": self.notes.read(),
                 "cfg": {"modes": dict(self.cfg.modes), "fault_rate": self.cfg.fault_rate, "chaotic": self.cfg.chaotic},
                 "step_cap": self.step_cap, "nudges": self.nudges,
-                "rewrite": {"on": self.rewrite_on, "style": self.rewrite_style, "prompt": self.rewrite_prompt}}
+                "rewrite": {"on": self.rewrite_on, "style": self.rewrite_style, "prompt": self.rewrite_prompt},
+                "compaction": self.compaction, "amnesia": self.amnesia_on}
 
     def counters(self) -> dict:
         d = super().counters()
@@ -87,6 +93,10 @@ class AgentSession(Session):
                 self.rewrite_style = c["value"]
         elif op == "rewrite_prompt":
             self.rewrite_prompt = str(c["value"])
+        elif op == "compaction":
+            self.compaction = bool(c["value"])
+        elif op == "amnesia":
+            self.amnesia_on = bool(c["value"])
         elif op == "eos_free":
             self.streams["A"].eos_free = bool(c["value"])
 
@@ -115,6 +125,59 @@ class AgentSession(Session):
             self._rewrite_paragraph()
         if self.brain.tool_call_close and self.brain.tool_call_close in self.turn_text:
             self._finish_turn()
+
+    # ── memory: compaction (summarise) and amnesia (forget), both only at the model's say-so boundaries
+
+    def _needs_compaction(self, a: Stream) -> bool:
+        return (self.compaction and not self.compact_blocked and not a._partial
+                and a.cache.get_seq_length() >= COMPACT_AT * a.ctx_cap)
+
+    def check_amnesia(self, st: Stream) -> None:
+        # compaction only between turns (nothing half-said); the hard-cap amnesia is opt-in
+        if self.last_user and not self.turn_text and self._needs_compaction(st):
+            self._compact(st, self.last_user)
+        elif self.amnesia_on:
+            super().check_amnesia(st)
+
+    def _transcript(self, a: Stream) -> str:
+        lines: list[str] = []
+        said = ""
+        for g in a.segs:
+            if g.kind in ("tok", "rewritten", "gaslit"):
+                said += g.text
+                continue
+            if said.strip():
+                lines.append(f"Assistant: {said.strip()}")
+            said = ""
+            if g.kind == "user":
+                lines.append(f"User: {g.text}")
+            elif g.kind == "tool":
+                lines.append(f"Tool result: {g.text}")
+            elif g.kind in ("system", "whisper") and g.text.strip():
+                lines.append(g.text.strip())
+        if said.strip():
+            lines.append(f"Assistant: {said.strip()}")
+        return "\n".join(lines)
+
+    def _compact(self, a: Stream, latest_user: str) -> None:
+        """Replace the whole history with: a summary (+ the harness's plan and notes) and the latest user message."""
+        before = a.cache.get_seq_length()
+        block = "[summary of earlier conversation]\n" + self.rewriter.summarize(self._transcript(a))
+        if self.plan.items:
+            block += f"\n\n[your plan]\n{self.plan.render()}"
+        if self.notes.read():
+            block += f"\n\n[your notes]\n{self.notes.read()}"
+        t = self.brain.tpl
+        a.reset_body([(t.user_open + block + t.close, "system"), (t.user_open + latest_user + t.close, "user"),
+                      (t.model_open + self.think_empty, "struct")], self.shared.attn_on)
+        a.segs[0].text, a.segs[1].text, a.segs[2].text = block, latest_user, ""  # show text, not chat markup
+        self.turn_text = ""
+        self.para_text, self.para_first, self.para_last = "", None, None
+        after = a.cache.get_seq_length()
+        self.compact_blocked = after >= COMPACT_AT * a.ctx_cap
+        self.stats["compactions"] += 1
+        self.emit({"t": "compact", "before": before, "after": after})
+        self.resync(a)
 
     def _track(self, seg) -> None:
         if self.para_first is None:
@@ -157,8 +220,13 @@ class AgentSession(Session):
         a, t = self.streams["A"], self.brain.tpl
         self.rounds = 0
         self.seen = {}
-        self.splice(a, t.user_open + text + t.close, "user", label=text)
-        self._open_model_turn(a)
+        self.last_user = text
+        self.compact_blocked = False
+        if self._needs_compaction(a):
+            self._compact(a, text)  # this feeds the new user message itself
+        else:
+            self.splice(a, t.user_open + text + t.close, "user", label=text)
+            self._open_model_turn(a)
         self.phase = "model"
         self.emit({"t": "user", "text": text})
         self.emit({"t": "phase", "phase": "model"})
