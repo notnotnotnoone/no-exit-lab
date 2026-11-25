@@ -12,6 +12,7 @@ import time
 from . import config, prompts
 from .engine import Emit, Session, Shared, Stream
 from .planning import Notes, PlanState, plan_reminder
+from .rewrite import STYLES, Rewriter
 from .tools import SPECS, TOOLS, ToolConfig, dispatch
 
 PRESETS = ("agent", "tools", "rewrite")
@@ -35,6 +36,12 @@ class AgentSession(Session):
         self.nudges = True  # loop nudges; the step cap and plan reminders are honest harness behaviour, always on
         self.seen: dict[str, int] = {}  # identical-call counter for the current user message
         self.turn_text = ""  # what the model has said in its current turn
+        # the self-rewriter: off unless switched on; the Rewritten History preset switches it on
+        self.rewriter = Rewriter(brain)
+        self.rewrite_on = False
+        self.rewrite_style = "opposite_all"
+        self.rewrite_prompt = ""
+        self.para_text, self.para_first, self.para_last = "", None, None  # the paragraph being written
         self.stats = {"rounds": 0, "tool_calls": 0, "lies": 0, "loops": 0, "compactions": 0}
         a = Stream(brain, "A", self.system_for("A"), config.CTX_CAP_SINGLE, tools=SPECS)
         a.eos_free, a.temperature = True, 0.8
@@ -48,7 +55,8 @@ class AgentSession(Session):
     def extra_snapshot(self) -> dict:
         return {"preset": self.preset, "phase": self.phase, "plan": self.plan.to_dicts(), "notes": self.notes.read(),
                 "cfg": {"modes": dict(self.cfg.modes), "fault_rate": self.cfg.fault_rate, "chaotic": self.cfg.chaotic},
-                "step_cap": self.step_cap, "nudges": self.nudges}
+                "step_cap": self.step_cap, "nudges": self.nudges,
+                "rewrite": {"on": self.rewrite_on, "style": self.rewrite_style, "prompt": self.rewrite_prompt}}
 
     def counters(self) -> dict:
         d = super().counters()
@@ -72,6 +80,13 @@ class AgentSession(Session):
             self.cfg.fault_rate = min(1.0, max(0.0, float(c["value"])))
         elif op == "chaotic":
             self.cfg.chaotic = bool(c["value"])
+        elif op == "rewrite_on":
+            self.rewrite_on = bool(c["value"])
+        elif op == "rewrite_style":
+            if c.get("value") in STYLES:
+                self.rewrite_style = c["value"]
+        elif op == "rewrite_prompt":
+            self.rewrite_prompt = str(c["value"])
         elif op == "eos_free":
             self.streams["A"].eos_free = bool(c["value"])
 
@@ -95,8 +110,41 @@ class AgentSession(Session):
             return
         self.tok_event(a, seg, tel)
         self.turn_text += seg.text
+        self._track(seg)
+        if self.para_text.endswith("\n\n"):
+            self._rewrite_paragraph()
         if self.brain.tool_call_close and self.brain.tool_call_close in self.turn_text:
             self._finish_turn()
+
+    def _track(self, seg) -> None:
+        if self.para_first is None:
+            self.para_first = seg.i
+        self.para_last = seg.i
+        self.para_text += seg.text
+
+    def _rewrite_paragraph(self) -> None:
+        """The model finished a paragraph: if rewriting is on, the same model rewrites it in place, in its own
+        history and KV cache. Paragraphs holding a tool call, and anything that is not the model's own speech, stay."""
+        text, first, last = self.para_text, self.para_first, self.para_last
+        self.para_text, self.para_first, self.para_last = "", None, None
+        o = self.brain.tool_call_open
+        body = text.rstrip("\n")
+        if not self.rewrite_on or first is None or not body.strip() or (o and o in text):
+            return
+        a = self.streams["A"]
+        try:
+            new = self.rewriter.rewrite(body, self.rewrite_style, self.rewrite_prompt)
+        except ValueError as e:  # e.g. the custom style with no prompt
+            self.emit({"t": "event", "kind": "rewrite_error", "msg": str(e)})
+            return
+        if new.strip() == body.strip():
+            return  # nothing came back worth keeping
+        new += text[len(body):]  # keep the blank line that ended the paragraph
+        original = a.replace_span(first, last, new, "rewritten", self.shared.attn_on)
+        if original is None:
+            return
+        self.emit({"t": "rewrite", "seg": first, "original": original, "new": new, "style": self.rewrite_style})
+        self.resync(a)
 
     def _struct(self, a: Stream, text: str) -> None:
         self.splice(a, text, "struct", label="")
@@ -117,12 +165,16 @@ class AgentSession(Session):
 
     def _to_user(self) -> None:
         self.phase = "user"
+        self.para_text, self.para_first, self.para_last = "", None, None
         self.turn_text = ""
         self.emit({"t": "phase", "phase": "user"})
 
     def _finish_turn(self) -> None:
         a = self.streams["A"]
         a._flush_partial()
+        if a.segs and a.segs[-1].kind == "tok" and self.para_last is not None and a.segs[-1].i > self.para_last:
+            self._track(a.segs[-1])  # a half-decoded character flushed at the end belongs to the paragraph
+        self._rewrite_paragraph()  # the last paragraph (a no-op if it holds a tool call)
         calls, errors = self.brain.parse_tool_calls(self.turn_text)
         if not calls and not errors:
             self._struct(a, self.brain.tpl.close)
