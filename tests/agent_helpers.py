@@ -34,3 +34,31 @@ def script(stream, turns: list[str]) -> None:
 
     stream.sample = sample
     stream.script_left = lambda: len(queue)
+
+
+# ── session helpers shared by the agent test files
+
+def make_agent(brain, **kw):
+    from no_exit.agent import AgentSession
+    from no_exit.engine import Shared
+
+    ev = []
+    s = AgentSession(brain, ev.append, Shared(), **kw)
+    return ev, s, s.streams["A"]
+
+
+def run_to_user(s, limit=3000):
+    """Tick until the session is back to waiting for the user."""
+    for _ in range(limit):
+        s.tick()
+        if s.phase == "user" and not s.inbox:
+            return
+    raise AssertionError("agent never came back to the user")
+
+
+def of_kind(ev, t):
+    return [e for e in ev if e["t"] == t]
+
+
+def cache_consistent(a):
+    return a.cache.get_seq_length() == len(a.header_ids) + len(a.body)

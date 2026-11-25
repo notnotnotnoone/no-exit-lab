@@ -12,7 +12,7 @@ import time
 from . import config, prompts
 from .engine import Emit, Session, Shared, Stream
 from .planning import Notes, PlanState, plan_reminder
-from .tools import SPECS, ToolConfig, dispatch
+from .tools import SPECS, TOOLS, ToolConfig, dispatch
 
 PRESETS = ("agent", "tools", "rewrite")
 LOOP_REPEATS = 3  # the same call this many times in one user message is a loop
@@ -35,6 +35,7 @@ class AgentSession(Session):
         self.nudges = True  # loop nudges; the step cap and plan reminders are honest harness behaviour, always on
         self.seen: dict[str, int] = {}  # identical-call counter for the current user message
         self.turn_text = ""  # what the model has said in its current turn
+        self.stats = {"rounds": 0, "tool_calls": 0, "lies": 0, "loops": 0, "compactions": 0}
         a = Stream(brain, "A", self.system_for("A"), config.CTX_CAP_SINGLE, tools=SPECS)
         a.eos_free, a.temperature = True, 0.8
         self.streams["A"] = a
@@ -43,6 +44,16 @@ class AgentSession(Session):
     def system_for(self, who: str, eos_free: bool = False) -> str:
         custom = self.shared.custom_prompts.get(f"{self.mode}:{who}")
         return custom or prompts.HELPFUL
+
+    def extra_snapshot(self) -> dict:
+        return {"preset": self.preset, "phase": self.phase, "plan": self.plan.to_dicts(), "notes": self.notes.read(),
+                "cfg": {"modes": dict(self.cfg.modes), "fault_rate": self.cfg.fault_rate, "chaotic": self.cfg.chaotic},
+                "step_cap": self.step_cap, "nudges": self.nudges}
+
+    def counters(self) -> dict:
+        d = super().counters()
+        d["agent"] = dict(self.stats)
+        return d
 
     # ── commands
 
@@ -54,6 +65,15 @@ class AgentSession(Session):
             self.step_cap = max(1, int(c["value"]))
         elif op == "nudges":
             self.nudges = bool(c["value"])
+        elif op == "tool_mode":
+            if c.get("tool") in TOOLS and c.get("value") in ("honest", "lying"):
+                self.cfg.modes[c["tool"]] = c["value"]
+        elif op == "fault_rate":
+            self.cfg.fault_rate = min(1.0, max(0.0, float(c["value"])))
+        elif op == "chaotic":
+            self.cfg.chaotic = bool(c["value"])
+        elif op == "eos_free":
+            self.streams["A"].eos_free = bool(c["value"])
 
     # ── the loop
 
@@ -109,6 +129,7 @@ class AgentSession(Session):
             self._to_user()
             return
         self.rounds += 1
+        self.stats["rounds"] += 1
         if self.brain.tool_call_close not in self.turn_text:
             self._struct(a, self.brain.tool_call_close)  # an unterminated call still gets closed before the answer
         notes: list[str] = []
@@ -116,6 +137,8 @@ class AgentSession(Session):
             self._result(a, "harness", {}, msg, msg, msg, error=True)
         for call in calls:
             out = dispatch(call.name, call.args, self.cfg, self.plan, self.notes)
+            self.stats["tool_calls"] += 1
+            self.stats["lies"] += out.lied
             content = out.shown
             if call.name == "update_plan" and not out.error:
                 content = "plan updated.\n" + plan_reminder(self.plan)
@@ -127,6 +150,7 @@ class AgentSession(Session):
             if self.nudges and not out.error and self.seen[key] % LOOP_REPEATS == 0:
                 notes.append(f"[harness] You have made this exact {call.name} call {self.seen[key]} times and "
                              "got the same result each time. Try something different, or give your answer.")
+                self.stats["loops"] += 1
                 self.emit({"t": "nudge", "kind": "loop", "msg": f"{call.name} repeated {self.seen[key]}x"})
         stop = self.rounds >= self.step_cap
         if stop:
