@@ -178,6 +178,13 @@ class Stream:
 
     # ── surgery on history
 
+    def _crop_to(self, length: int) -> None:
+        """Keep the first `length` positions. Always passes a negative count, the only form every transformers
+        release accepts (newer ones reject a positive length)."""
+        extra = self.cache.get_seq_length() - length
+        if extra > 0:
+            self.cache.crop(-extra)
+
     def rebuild_from(self, start: int, want_attn: bool = False) -> None:
         """Crop the cache to header+body[:start] and re-prefill the rest."""
         keep = len(self.header_ids) + start
@@ -186,10 +193,10 @@ class Stream:
             self.cache = self.brain.new_cache()
             ids = self.header_ids + self.body
         else:
-            self.cache.crop(keep)
+            self._crop_to(keep)
             ids = self.body[start:]
         if not ids:  # nothing after the crop point: recompute the last position
-            self.cache.crop(keep - 1)
+            self._crop_to(keep - 1)
             ids = (self.header_ids + self.body)[keep - 1 : keep]
         self.pending = self.brain.forward(self.cache, ids, self.profile, want_attn=want_attn)
 
