@@ -126,6 +126,8 @@ _GQ = '<|"|>'  # Gemma 4's string-quote token
 
 def _parse_gemma_value(s: str, i: int):
     """Parse one Gemma 4 argument value starting at s[i]; returns (value, next_index)."""
+    if i >= len(s):
+        raise ValueError("the call ended where a value should be")
     if s.startswith(_GQ, i):
         j = s.index(_GQ, i + len(_GQ))
         return s[i + len(_GQ) : j], j + len(_GQ)
@@ -133,16 +135,20 @@ def _parse_gemma_value(s: str, i: int):
         return _parse_gemma_obj(s, i + 1)
     if s[i] == "[":
         out, i = [], i + 1
-        while s[i] != "]":
+        while i < len(s) and s[i] != "]":
             v, i = _parse_gemma_value(s, i)
             out.append(v)
-            if s[i] == ",":
+            if i < len(s) and s[i] == ",":
                 i += 1
+        if i >= len(s):
+            raise ValueError("unterminated list")
         return out, i + 1
     j = i
     while j < len(s) and s[j] not in ",}]":
         j += 1
     raw = s[i:j].strip()
+    if not raw:
+        raise ValueError(f"missing value at position {i}")
     if raw in ("true", "false"):
         return raw == "true", j
     if raw in ("null", "none", "None"):
@@ -158,12 +164,14 @@ def _parse_gemma_value(s: str, i: int):
 def _parse_gemma_obj(s: str, i: int):
     """Parse `k:v,k:v}` (opening brace already consumed); returns (dict, index after the closing brace)."""
     out: dict = {}
-    while s[i] != "}":
+    while i < len(s) and s[i] != "}":
         j = s.index(":", i)
         key = s[i:j].strip()
         out[key], i = _parse_gemma_value(s, j + 1)
-        if s[i] == ",":
+        if i < len(s) and s[i] == ",":
             i += 1
+    if i >= len(s):
+        raise ValueError("unterminated argument object")
     return out, i + 1
 
 

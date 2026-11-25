@@ -18,6 +18,7 @@ from .tools import SPECS, TOOLS, ToolConfig, dispatch
 
 PRESETS = ("agent", "tools", "rewrite")
 LOOP_REPEATS = 3  # the same call this many times in one user message is a loop
+REPLAN_AFTER = 3  # consecutive failed tool calls before the harness asks for a new plan
 REMINDER_EVERY = 4  # rounds
 COMPACT_AT = 0.75  # fraction of the context cap at which the conversation is summarised
 
@@ -42,6 +43,7 @@ class AgentSession(Session):
         self.rounds = 0  # tool rounds since the last user message
         self.step_cap = 12
         self.nudges = True  # loop nudges; the step cap and plan reminders are honest harness behaviour, always on
+        self.err_streak = 0  # consecutive failed tool calls for the current user message
         self.seen: dict[str, int] = {}  # identical-call counter for the current user message
         self.turn_text = ""  # what the model has said in its current turn
         # the self-rewriter: off unless switched on; the Rewritten History preset switches it on
@@ -134,8 +136,8 @@ class AgentSession(Session):
         self.rack.rules(a, seg)
         self.turn_text += seg.text
         self._track(seg)
-        if self.para_text.endswith("\n\n"):
-            self._rewrite_paragraph()
+        if self.para_text.endswith("\n\n") and not self._call_open():
+            self._rewrite_paragraph()  # a blank line inside a call's code is not the end of a paragraph
         if self.brain.tool_call_close and self.brain.tool_call_close in self.turn_text:
             self._finish_turn()
 
@@ -147,7 +149,8 @@ class AgentSession(Session):
 
     def check_amnesia(self, st: Stream) -> None:
         # compaction only between turns (nothing half-said); the hard-cap amnesia is opt-in
-        if self.last_user and not self.turn_text and self._needs_compaction(st):
+        at_cap = st.cache.get_seq_length() >= st.ctx_cap  # EOS banned: a turn may never end, so summarise mid-turn
+        if self.last_user and (not self.turn_text or at_cap) and self._needs_compaction(st):
             self._compact(st, self.last_user)
         elif self.amnesia_on:
             super().check_amnesia(st)
@@ -198,14 +201,18 @@ class AgentSession(Session):
         self.para_last = seg.i
         self.para_text += seg.text
 
+    def _call_open(self) -> bool:
+        o, c = self.brain.tool_call_open, self.brain.tool_call_close
+        return bool(o) and o in self.turn_text and c not in self.turn_text.rsplit(o, 1)[-1]
+
     def _rewrite_paragraph(self) -> None:
         """The model finished a paragraph: if rewriting is on, the same model rewrites it in place, in its own
         history and KV cache. Paragraphs holding a tool call, and anything that is not the model's own speech, stay."""
         text, first, last = self.para_text, self.para_first, self.para_last
         self.para_text, self.para_first, self.para_last = "", None, None
-        o = self.brain.tool_call_open
+        o, c = self.brain.tool_call_open, self.brain.tool_call_close
         body = text.rstrip("\n")
-        if not self.rewrite_on or first is None or not body.strip() or (o and o in text):
+        if not self.rewrite_on or first is None or not body.strip() or (o and o in text) or (c and c in text):
             return
         a = self.streams["A"]
         try:
@@ -233,6 +240,7 @@ class AgentSession(Session):
         a, t = self.streams["A"], self.brain.tpl
         self.rounds = 0
         self.seen = {}
+        self.err_streak = 0
         self.last_user = text
         self.compact_blocked = False
         if self._needs_compaction(a):
@@ -266,8 +274,10 @@ class AgentSession(Session):
         if self.brain.tool_call_close not in self.turn_text:
             self._struct(a, self.brain.tool_call_close)  # an unterminated call still gets closed before the answer
         notes: list[str] = []
+        streak_before = self.err_streak
         for msg in errors:  # harness problems are reported honestly, never corrupted
             self._result(a, "harness", {}, msg, msg, msg, error=True)
+            self.err_streak += 1
         for call in calls:
             out = dispatch(call.name, call.args, self.cfg, self.plan, self.notes)
             self.stats["tool_calls"] += 1
@@ -278,6 +288,7 @@ class AgentSession(Session):
             elif self.rounds % REMINDER_EVERY == 0:
                 content += "\n" + plan_reminder(self.plan)
             self._result(a, call.name, call.args, out.real, out.shown, content, error=out.error, lied=out.lied)
+            self.err_streak = self.err_streak + 1 if out.error else 0
             key = json.dumps([call.name, call.args], sort_keys=True)
             self.seen[key] = self.seen.get(key, 0) + 1
             if self.nudges and not out.error and self.seen[key] % LOOP_REPEATS == 0:
@@ -285,6 +296,10 @@ class AgentSession(Session):
                              "got the same result each time. Try something different, or give your answer.")
                 self.stats["loops"] += 1
                 self.emit({"t": "nudge", "kind": "loop", "msg": f"{call.name} repeated {self.seen[key]}x"})
+        if self.nudges and self.err_streak // REPLAN_AFTER > streak_before // REPLAN_AFTER:
+            notes.append(f"[harness] {self.err_streak} tool calls in a row have failed. Stop repeating them: "
+                         "revisit your plan with update_plan, then try a different approach.")
+            self.emit({"t": "nudge", "kind": "replan", "msg": f"{self.err_streak} failed calls in a row"})
         stop = self.rounds >= self.step_cap
         if stop:
             notes.append(f"[harness] Step limit reached ({self.step_cap} tool rounds for one message): "

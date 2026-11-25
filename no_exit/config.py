@@ -28,5 +28,5 @@ SEIZURE_HOT = (2.3, 20)  # (temperature, tokens)
 SEIZURE_COLD = (0.1, 20)
 
 # ─── server ──────────────────────────────────────────────────────────────────────
-HOST = os.environ.get("NO_EXIT_HOST", "0.0.0.0")
+HOST = os.environ.get("NO_EXIT_HOST", "127.0.0.1")
 PORT = int(os.environ.get("NO_EXIT_PORT", 8000))

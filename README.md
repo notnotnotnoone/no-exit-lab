@@ -52,7 +52,7 @@ Tests (both model families, CPU, offline once the tokenizers are cached):
 HF_HUB_OFFLINE=1 python -m pytest tests -q
 ```
 
-The agent's honest `python` tool runs code in an ordinary subprocess with a timeout, not a sandbox. Run the agent presets on Colab or another throwaway machine, not on a computer holding anything you care about.
+The agent's honest `python` tool runs code in an ordinary subprocess with a timeout, not a sandbox. Run the agent presets on Colab or another throwaway machine, not on a computer holding anything you care about. In Lying Tools the model's code runs twice (once for the log, once mutated for the model), so anything with side effects happens twice. The console listens on `127.0.0.1` by default; set `NO_EXIT_HOST=0.0.0.0` only on a machine you trust the whole network of, and treat the Colab tunnel link as a password: anyone holding it can make the agent run python.
 
 After editing anything in `no_exit/`, regenerate the notebook:
 

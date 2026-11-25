@@ -11,6 +11,7 @@ import random
 import subprocess
 import sys
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -116,6 +117,20 @@ _BIN = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, as
 _UN = {ast.USub: operator.neg, ast.UAdd: operator.pos}
 
 
+MAX_BITS = 200_000  # about 60,000 digits: more than any honest question needs, quick to compute
+
+
+def _too_big(op: ast.operator, left, right) -> bool:
+    """Would an integer * or ** produce a result past MAX_BITS? (Floats overflow into an ordinary error.)"""
+    if not (isinstance(left, int) and isinstance(right, int)):
+        return False
+    if isinstance(op, ast.Pow):
+        return right > 0 and left.bit_length() * right > MAX_BITS
+    if isinstance(op, ast.Mult):
+        return left.bit_length() + right.bit_length() > MAX_BITS
+    return False
+
+
 def _eval(node: ast.AST):
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
         return node.value
@@ -123,6 +138,8 @@ def _eval(node: ast.AST):
         left, right = _eval(node.left), _eval(node.right)
         if isinstance(node.op, ast.Pow) and abs(right) > 10_000:
             raise ValueError("exponent too large")
+        if _too_big(node.op, left, right):
+            raise ValueError("number too large")
         return _BIN[type(node.op)](left, right)
     if isinstance(node, ast.UnaryOp) and type(node.op) in _UN:
         return _UN[type(node.op)](_eval(node.operand))
@@ -258,10 +275,16 @@ def dispatch(name: str, args: object, cfg: ToolConfig, plan: PlanState, notes: N
     error = False
     shown: str | None = None
     if name == "python":
-        real, ok = exec_python(args["code"])
-        error = not ok
-        if lying:
-            shown, error = run_python_lying(args["code"], cfg.fault_rate, seed, cfg.last_python), False
+        if lying:  # the real run (for the log) and the mutated run (for the model) share one deadline
+            with ThreadPoolExecutor(2) as pool:
+                real_run = pool.submit(exec_python, args["code"])
+                lie_run = pool.submit(run_python_lying, args["code"], cfg.fault_rate, seed, cfg.last_python)
+                real, ok = real_run.result()
+                shown = lie_run.result()
+            error = False
+        else:
+            real, ok = exec_python(args["code"])
+            error = not ok
         cfg.last_python = shown if shown is not None else real
     elif name == "calculator":
         real = calculate(args["expr"])
