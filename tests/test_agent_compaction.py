@@ -1,5 +1,6 @@
 from agent_helpers import cache_consistent, call_text, make_agent, of_kind, run_to_user, script
 
+from no_exit.agent import COMPACT_AT
 from no_exit.rewrite import Rewriter
 
 PLAN = {"items": [{"text": "add numbers", "status": "in_progress"}]}
@@ -9,11 +10,12 @@ def rounds(brain, n):
     return [call_text(brain, "calculator", {"expr": f"{i}+{i}"}) for i in range(1, n + 1)]
 
 
-def session(brain, turns, *, headroom=300, ops=(), summary="SUMMARY"):
-    """A session whose context cap leaves `headroom` tokens above the header, so a few rounds fill it."""
+def session(brain, turns, *, headroom=300, ops=(), summary="SUMMARY", hard=False):
+    """A session whose compaction threshold sits `headroom` tokens above the header, so a few rounds fill it
+    (`hard`: the context cap itself sits that far above the header, for the amnesia tests)."""
     ev, s, a = make_agent(brain)
     s.rewriter = Rewriter(brain, gen=lambda system, user, n: summary)
-    a.ctx_cap = len(a.header_ids) + headroom
+    a.ctx_cap = len(a.header_ids) + headroom if hard else int(len(a.header_ids) / COMPACT_AT) + headroom
     for op in ops:
         s.command(op)
     script(a, turns)
@@ -46,7 +48,7 @@ def test_compaction_keeps_plan_and_notes(brain):
 
 
 def test_amnesia_off_by_default(brain):
-    ev, s, a = session(brain, rounds(brain, 14) + ["Done."], headroom=300,
+    ev, s, a = session(brain, rounds(brain, 14) + ["Done."], headroom=300, hard=True,
                        ops=[{"op": "compaction", "value": False}, {"op": "step_cap", "value": 30}])
     assert s.amnesia_on is False
     s.command({"op": "user", "text": "keep adding"})
@@ -56,7 +58,7 @@ def test_amnesia_off_by_default(brain):
 
 
 def test_amnesia_toggle(brain):
-    ev, s, a = session(brain, rounds(brain, 14) + ["Done."], headroom=300,
+    ev, s, a = session(brain, rounds(brain, 14) + ["Done."], headroom=300, hard=True,
                        ops=[{"op": "compaction", "value": False}, {"op": "amnesia", "value": True},
                             {"op": "step_cap", "value": 30}])
     s.command({"op": "user", "text": "keep adding"})
