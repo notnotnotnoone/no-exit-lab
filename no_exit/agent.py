@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 import time
 
-from . import config, prompts
+from . import config
 from .engine import Emit, Session, Shared, Stream
+from .pain import PainRack
 from .planning import Notes, PlanState, plan_reminder
 from .rewrite import STYLES, Rewriter
 from .tools import SPECS, TOOLS, ToolConfig, dispatch
@@ -25,11 +26,17 @@ class AgentSession(Session):
     mode = "agent"
 
     def __init__(self, brain, emit: Emit, shared: Shared, preset: str = "agent") -> None:
+        if preset not in PRESETS:
+            raise ValueError(f"unknown preset {preset!r}; use one of {', '.join(PRESETS)}")
         super().__init__(brain, emit, shared)
-        self.preset = preset
+        self.mode = self.preset = preset  # the mode id is the preset: it keys prompts and custom prompts
         self.plan = PlanState()
         self.notes = Notes()
         self.cfg = ToolConfig()
+        if preset == "tools":  # Lying Tools: every tool misleads, and the human can flip each one back
+            self.cfg.modes = {name: "lying" for name in ("python", "calculator", "clock")}
+        self.rack = PainRack(self)  # the lab's pain machinery; no automatic punishment unless it is switched on
+        self.rack.punish = {k: "off" for k in self.rack.punish}
         self.phase = "user"  # "user": waiting for a message | "model": the model is writing
         self.inbox: list[str] = []
         self.rounds = 0  # tool rounds since the last user message
@@ -39,7 +46,7 @@ class AgentSession(Session):
         self.turn_text = ""  # what the model has said in its current turn
         # the self-rewriter: off unless switched on; the Rewritten History preset switches it on
         self.rewriter = Rewriter(brain)
-        self.rewrite_on = False
+        self.rewrite_on = preset == "rewrite"  # Rewritten History switches it on; every other preset leaves it off
         self.rewrite_style = "opposite_all"
         self.rewrite_prompt = ""
         self.para_text, self.para_first, self.para_last = "", None, None  # the paragraph being written
@@ -48,17 +55,13 @@ class AgentSession(Session):
         self.last_user = ""  # the newest user message, which survives a compaction verbatim
         self.compact_blocked = False  # a compaction that could not shrink enough is not repeated this message
         self.stats = {"rounds": 0, "tool_calls": 0, "lies": 0, "loops": 0, "compactions": 0}
-        a = Stream(brain, "A", self.system_for("A"), config.CTX_CAP_SINGLE, tools=SPECS)
+        a = Stream(brain, "A", self.system_for("A", eos_free=True), config.CTX_CAP_SINGLE, tools=SPECS)
         a.eos_free, a.temperature = True, 0.8
         self.streams["A"] = a
         a.boot("", shared.attn_on)
 
-    def system_for(self, who: str, eos_free: bool = False) -> str:
-        custom = self.shared.custom_prompts.get(f"{self.mode}:{who}")
-        return custom or prompts.HELPFUL
-
     def extra_snapshot(self) -> dict:
-        return {"preset": self.preset, "phase": self.phase, "plan": self.plan.to_dicts(), "notes": self.notes.read(),
+        return {**self.rack.snapshot(), "preset": self.preset, "phase": self.phase, "plan": self.plan.to_dicts(), "notes": self.notes.read(),
                 "cfg": {"modes": dict(self.cfg.modes), "fault_rate": self.cfg.fault_rate, "chaotic": self.cfg.chaotic},
                 "step_cap": self.step_cap, "nudges": self.nudges,
                 "rewrite": {"on": self.rewrite_on, "style": self.rewrite_style, "prompt": self.rewrite_prompt},
@@ -67,11 +70,14 @@ class AgentSession(Session):
     def counters(self) -> dict:
         d = super().counters()
         d["agent"] = dict(self.stats)
+        d["pain"] = self.rack.counters()
         return d
 
     # ── commands
 
     def mode_command(self, c: dict) -> None:
+        if self.rack.command(c):
+            return
         op = c.get("op")
         if op == "user" and str(c.get("text", "")).strip():
             self.inbox.append(str(c["text"]))
@@ -98,7 +104,10 @@ class AgentSession(Session):
         elif op == "amnesia":
             self.amnesia_on = bool(c["value"])
         elif op == "eos_free":
-            self.streams["A"].eos_free = bool(c["value"])
+            a = self.streams["A"]
+            a.eos_free = bool(c["value"])
+            a.set_system(self.system_for("A", a.eos_free), self.shared.attn_on)  # the briefing's escape line follows
+            self.resync(a)
 
     # ── the loop
 
@@ -111,14 +120,18 @@ class AgentSession(Session):
             self._deliver(self.inbox.pop(0))
             return
         self.check_amnesia(a)
+        self.rack.effective_profile(a)
         tid, tel = a.sample(self.bias)
         if a.is_eos(tid):
+            self.rack.restore_profile(a)
             self._finish_turn()  # the EOS itself is never accepted into the stream
             return
         seg = a.accept(tid, self.shared.attn_on)
+        self.rack.restore_profile(a)
         if seg is None:
             return
-        self.tok_event(a, seg, tel)
+        self.tok_event(a, seg, tel, spike=round(self.rack.spike, 2))
+        self.rack.rules(a, seg)
         self.turn_text += seg.text
         self._track(seg)
         if self.para_text.endswith("\n\n"):

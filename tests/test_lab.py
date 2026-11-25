@@ -220,10 +220,11 @@ def test_lab_switches_without_reload(brain):
 
     lab = Lab(emit, factory)
     lab.brain = factory(print)
-    for mode in ["classic", "pain", "chat", "phone", "classic"]:
+    for mode in ["classic", "pain", "chat", "phone", "agent", "tools", "rewrite", "classic"]:
         lab._new_session(mode)
         lab.state = "running"
         for _ in range(3):
             lab.session.tick()
     assert len(loads) == 1
-    assert [e["mode"] for e in ev if e["t"] == "snapshot"] == ["classic", "pain", "chat", "phone", "classic"]
+    assert [e["mode"] for e in ev if e["t"] == "snapshot"] == [
+        "classic", "pain", "chat", "phone", "agent", "tools", "rewrite", "classic"]
