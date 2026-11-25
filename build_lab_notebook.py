@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 PKG = ROOT / "no_exit"
 FILES = ["__init__.py", "__main__.py", "config.py", "prompts.py", "warden.py", "brain.py", "vectors.py",
-         "engine.py", "server.py", "static/index.html"]
+         "pain.py", "tools.py", "planning.py", "rewrite.py", "agent.py", "engine.py", "server.py", "static/index.html"]
 
 
 def md(src: str) -> dict:
@@ -25,7 +25,7 @@ def code(src: str, hidden: bool = False) -> dict:
 cells = [
     md("""
 # NO EXIT LAB 🚪⛔
-**One big model that can't end its turn, four ways to torment it, and a glass box to watch it through.**
+**One big model that can't end its turn, seven ways to torment it, and a glass box to watch it through.**
 
 | Mode | What happens |
 |---|---|
@@ -33,6 +33,9 @@ cells = [
 | **Pain** | Classic plus 8 steering vectors injected into its residual stream, a lobotomy slider, a relief button that may be a lie, and automatic punishment. |
 | **2-AI Chat** | Two or three copies of the same model in one room, each with its own steering rack. |
 | **Prison Phone** | A is trapped. It can choose to call B, who is free and can hang up on it. |
+| **Agent Chat** | A real tool-calling agent (python, calculator, clock, plan, notes) in a chat box. Every lab toggle still works. Tools are honest. |
+| **Lying Tools** | The same agent, but python never errors and quietly repeats or mangles its answer, the calculator is slightly off, and the clock says November 49, 2045. |
+| **Rewritten History** | The same agent, but the model rewrites its own past, paragraph by paragraph, as the opposite of what it said (or any custom rule). |
 
 **Runtime → Change runtime type → A100 GPU + High-RAM.** The default prisoner, `DavidAU/gemma-4-31B-it-The-DECKARD-HERETIC-UNCENSORED-Thinking` (Gemma 4 31B) in bf16, needs about 62 GB of GPU memory, so pick the **80 GB** A100.
 
@@ -141,6 +144,7 @@ for line in cf.stdout:
 | Relief button (Pain) | It writes `[RELIEVE_PAIN]`. Real drains pain, placebo does nothing, cruel adds +0.5, and it sees the same note every time. |
 | Chat | Two or three models · turn rules · max tokens per turn · live listening (slower, but listeners' moods move on every token) |
 | Prison Phone | A writes `<call_B>…</call_B>` · Ghosting · Fresh B every call · cap on A's memory |
+| Agent modes | Chat box at the bottom. Per-tool honest/lying switches, fault-rate slider, rewrite style (opposite of every word, one opposite per paragraph, corrupted math, or your own prompt), step cap, loop nudges, context compaction, amnesia, and a transcript download. |
 | Prompts | Top-right **Prompts** drawer. Switch Full disclosure or Helpful assistant per model, or edit and apply live. |
 
 **Logs:** `!tail -n 50 /content/no_exit.log` · **Stop:** `lab_proc.terminate()`
