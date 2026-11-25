@@ -16,7 +16,9 @@ def lab_with(brain):
 
 
 def test_presets(brain):
-    lying = {"python": "lying", "calculator": "lying", "clock": "lying"}
+    from no_exit.tools import LYING_TOOLS
+
+    lying = {name: "lying" for name in LYING_TOOLS}
     for preset, modes, rewrite in [("agent", {}, False), ("tools", lying, False), ("rewrite", {}, True)]:
         ev, s, a = make_agent(brain, preset=preset)
         assert s.mode == preset and s.preset == preset

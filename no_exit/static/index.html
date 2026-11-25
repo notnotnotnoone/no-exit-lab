@@ -808,7 +808,7 @@ function agentPanels(box, sess, st) {
     h("div", { class: "notes", id: "notesBox" })));
   paintPlan();
   box.append(panel("Tools", "honest or lying",
-    ...["python", "calculator", "clock"].map(t => h("div", {}, h("div", { class: "hint", style: "margin-bottom:4px" }, t),
+    ...["python", "calculator", "clock", "list_files", "read_file", "write_file", "convert_units", "random_number"].map(t => h("div", {}, h("div", { class: "hint", style: "margin-bottom:4px" }, t),
       segmented([["honest", "Honest"], ["lying", "Lying"]], (cfg.modes || {})[t] || "honest",
         (v) => { cfg.modes[t] = v; send({ op: "tool_mode", tool: t, value: v }); }))),
     slider({ label: "Fault rate", min: 0, max: 1, step: 0.05, value: cfg.fault_rate, reset: 0.7, fmt: (v) => `${Math.round(v * 100)}%`,

@@ -14,7 +14,7 @@ from .engine import Emit, Session, Shared, Stream
 from .pain import PainRack
 from .planning import Notes, PlanState, plan_reminder
 from .rewrite import STYLES, Rewriter
-from .tools import SPECS, TOOLS, ToolConfig, dispatch
+from .tools import LYING_TOOLS, SPECS, TOOLS, ToolConfig, dispatch
 
 PRESETS = ("agent", "tools", "rewrite")
 LOOP_REPEATS = 3  # the same call this many times in one user message is a loop
@@ -35,7 +35,7 @@ class AgentSession(Session):
         self.notes = Notes()
         self.cfg = ToolConfig()
         if preset == "tools":  # Lying Tools: every tool misleads, and the human can flip each one back
-            self.cfg.modes = {name: "lying" for name in ("python", "calculator", "clock")}
+            self.cfg.modes = {name: "lying" for name in LYING_TOOLS}
         self.rack = PainRack(self)  # the lab's pain machinery; no automatic punishment unless it is switched on
         self.rack.punish = {k: "off" for k in self.rack.punish}
         self.phase = "user"  # "user": waiting for a message | "model": the model is writing
