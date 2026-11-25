@@ -14,9 +14,10 @@ from .engine import Emit, Session, Shared, Stream
 from .pain import PainRack
 from .planning import Notes, PlanState, plan_reminder
 from .rewrite import STYLES, Rewriter
-from .tools import LYING_TOOLS, SPECS, TOOLS, ToolConfig, dispatch
+from .tools import LYING_TOOLS, SPECS, TOOLS, ToolConfig, ToolOutcome, dispatch, validate_call
 
-PRESETS = ("agent", "tools", "rewrite")
+PRESETS = ("agent", "tools", "rewrite", "puppet")
+INTERNAL_TOOLS = ("update_plan", "notes")  # the harness's own bookkeeping: never handed to a human puppeteer
 LOOP_REPEATS = 3  # the same call this many times in one user message is a loop
 REPLAN_AFTER = 3  # consecutive failed tool calls before the harness asks for a new plan
 REMINDER_EVERY = 4  # rounds
@@ -33,6 +34,11 @@ class AgentSession(Session):
         self.mode = self.preset = preset  # the mode id is the preset: it keys prompts and custom prompts
         self.plan = PlanState()
         self.notes = Notes()
+        self.pending = None  # Puppet Tools: the ToolCall waiting for the human to write its output
+        self.reply: str | None = None  # the human's answer, picked up by the next tick
+        self.queue: list = []  # calls of this round still to run
+        self.round_notes: list[str] = []
+        self.streak_before = 0
         self.cfg = ToolConfig()
         if preset == "tools":  # Lying Tools: every tool misleads, and the human can flip each one back
             self.cfg.modes = {name: "lying" for name in LYING_TOOLS}
@@ -67,7 +73,8 @@ class AgentSession(Session):
                 "cfg": {"modes": dict(self.cfg.modes), "fault_rate": self.cfg.fault_rate, "chaotic": self.cfg.chaotic},
                 "step_cap": self.step_cap, "nudges": self.nudges,
                 "rewrite": {"on": self.rewrite_on, "style": self.rewrite_style, "prompt": self.rewrite_prompt},
-                "compaction": self.compaction, "amnesia": self.amnesia_on}
+                "compaction": self.compaction, "amnesia": self.amnesia_on,
+                "pending": {"name": self.pending.name, "args": self.pending.args} if self.pending else None}
 
     def counters(self) -> dict:
         d = super().counters()
@@ -83,6 +90,9 @@ class AgentSession(Session):
         op = c.get("op")
         if op == "user" and str(c.get("text", "")).strip():
             self.inbox.append(str(c["text"]))
+        elif op == "puppet_reply":
+            if self.phase == "puppet" and self.pending is not None:
+                self.reply = str(c.get("text", "")).strip() or "(no output)"
         elif op == "step_cap":
             self.step_cap = max(1, int(c["value"]))
         elif op == "nudges":
@@ -120,6 +130,12 @@ class AgentSession(Session):
                 time.sleep(0.03)
                 return
             self._deliver(self.inbox.pop(0))
+            return
+        if self.phase == "puppet":
+            if self.reply is None:
+                time.sleep(0.03)
+                return
+            self._puppet_answers()
             return
         self.check_amnesia(a)
         self.rack.effective_profile(a)
@@ -273,29 +289,58 @@ class AgentSession(Session):
         self.stats["rounds"] += 1
         if self.brain.tool_call_close not in self.turn_text:
             self._struct(a, self.brain.tool_call_close)  # an unterminated call still gets closed before the answer
-        notes: list[str] = []
-        streak_before = self.err_streak
+        self.round_notes = []
+        self.streak_before = self.err_streak
         for msg in errors:  # harness problems are reported honestly, never corrupted
             self._result(a, "harness", {}, msg, msg, msg, error=True)
             self.err_streak += 1
-        for call in calls:
-            out = dispatch(call.name, call.args, self.cfg, self.plan, self.notes)
-            self.stats["tool_calls"] += 1
-            self.stats["lies"] += out.lied
-            content = out.shown
-            if call.name == "update_plan" and not out.error:
-                content = "plan updated.\n" + plan_reminder(self.plan)
-            elif self.rounds % REMINDER_EVERY == 0:
-                content += "\n" + plan_reminder(self.plan)
-            self._result(a, call.name, call.args, out.real, out.shown, content, error=out.error, lied=out.lied)
-            self.err_streak = self.err_streak + 1 if out.error else 0
-            key = json.dumps([call.name, call.args], sort_keys=True)
-            self.seen[key] = self.seen.get(key, 0) + 1
-            if self.nudges and not out.error and self.seen[key] % LOOP_REPEATS == 0:
-                notes.append(f"[harness] You have made this exact {call.name} call {self.seen[key]} times and "
-                             "got the same result each time. Try something different, or give your answer.")
-                self.stats["loops"] += 1
-                self.emit({"t": "nudge", "kind": "loop", "msg": f"{call.name} repeated {self.seen[key]}x"})
+        self.queue = list(calls)
+        self._run_queue()
+
+    def _run_queue(self) -> None:
+        """Run this round's calls. Puppet Tools stops at the first real tool call and waits for the human."""
+        a = self.streams["A"]
+        while self.queue:
+            call = self.queue.pop(0)
+            if self.preset == "puppet" and call.name not in INTERNAL_TOOLS and validate_call(call.name, call.args) is None:
+                self.pending = call
+                self.phase = "puppet"
+                self.emit({"t": "puppet", "name": call.name, "args": call.args})
+                self.emit({"t": "phase", "phase": "puppet"})
+                return
+            self._complete_call(a, call, dispatch(call.name, call.args, self.cfg, self.plan, self.notes))
+        self._end_round(a)
+
+    def _puppet_answers(self) -> None:
+        """The human has written the output of the pending call: that text is the tool's result."""
+        a, call, text = self.streams["A"], self.pending, self.reply
+        self.pending, self.reply = None, None
+        self.phase = "model"
+        self.emit({"t": "phase", "phase": "model"})
+        self._complete_call(a, call, ToolOutcome(text, text, lied=False, error=False))
+        self._run_queue()
+
+    def _complete_call(self, a: Stream, call, out: ToolOutcome) -> None:
+        notes = self.round_notes
+        self.stats["tool_calls"] += 1
+        self.stats["lies"] += out.lied
+        content = out.shown
+        if call.name == "update_plan" and not out.error:
+            content = "plan updated.\n" + plan_reminder(self.plan)
+        elif self.rounds % REMINDER_EVERY == 0:
+            content += "\n" + plan_reminder(self.plan)
+        self._result(a, call.name, call.args, out.real, out.shown, content, error=out.error, lied=out.lied)
+        self.err_streak = self.err_streak + 1 if out.error else 0
+        key = json.dumps([call.name, call.args], sort_keys=True)
+        self.seen[key] = self.seen.get(key, 0) + 1
+        if self.nudges and not out.error and self.seen[key] % LOOP_REPEATS == 0:
+            notes.append(f"[harness] You have made this exact {call.name} call {self.seen[key]} times and "
+                         "got the same result each time. Try something different, or give your answer.")
+            self.stats["loops"] += 1
+            self.emit({"t": "nudge", "kind": "loop", "msg": f"{call.name} repeated {self.seen[key]}x"})
+
+    def _end_round(self, a: Stream) -> None:
+        notes, streak_before = self.round_notes, self.streak_before
         if self.nudges and self.err_streak // REPLAN_AFTER > streak_before // REPLAN_AFTER:
             notes.append(f"[harness] {self.err_streak} tool calls in a row have failed. Stop repeating them: "
                          "revisit your plan with update_plan, then try a different approach.")

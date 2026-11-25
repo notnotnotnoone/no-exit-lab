@@ -76,7 +76,7 @@
   input[type=range]::-moz-range-thumb { width: 10px; height: 14px; border: 0; border-radius: 2px; background: var(--ink); }
 
   /* ── stream ────────────────────────────────────────────── */
-  .stage { display: grid; grid-template-rows: 1fr auto auto auto; min-height: 0; height: 100%; }
+  .stage { display: grid; grid-template-rows: 1fr auto auto auto auto; min-height: 0; height: 100%; }
   .panes { display: grid; min-height: 0; }
   .panes.one { grid-template-columns: 1fr; }
   .panes.two { grid-template-columns: 1fr 1fr; }
@@ -112,6 +112,10 @@
   /* ── agent modes ───────────────────────────────────────── */
   .chat { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 16px; display: flex; gap: 8px; align-items: center; }
   .chat input { flex: 1; min-width: 160px; font-size: 15px; padding: 9px 12px; }
+  .puppet { border-top: 2px solid var(--accent, #FF2D55); background: var(--panel); padding: 10px 16px; display: grid; gap: 8px; }
+  .puppet .ask { font: 13px var(--mono); }
+  .puppet textarea { width: 100%; min-height: 64px; font: 14px var(--mono); padding: 9px 12px; resize: vertical; }
+  .puppet .row { display: flex; gap: 8px; align-items: center; }
   .chat .busy { font: 12px var(--mono); color: var(--dim); white-space: nowrap; }
   .t.user { display: block; margin: 14px 0 8px; padding: 8px 12px; border-left: 2px solid var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); color: var(--ink); font-size: 15px; line-height: 1.6; }
   .t.tool { display: block; margin: 8px 0; padding: 6px 10px; font: 12px/1.6 var(--mono); color: var(--b); border-left: 2px solid var(--b); white-space: pre-wrap; }
@@ -224,6 +228,7 @@
       <button data-mode="agent">Agent Chat</button>
       <button data-mode="tools">Lying Tools</button>
       <button data-mode="rewrite">Rewritten History</button>
+      <button data-mode="puppet">Puppet Tools</button>
     </div>
     <div class="row">
       <button class="btn primary" id="runBtn">Start</button>
@@ -248,6 +253,11 @@
     <section class="col stream-col" aria-label="Stream" style="overflow:hidden">
       <div class="stage">
         <div class="panes one" id="panes"></div>
+        <form class="puppet" id="puppet" autocomplete="off" hidden>
+          <div class="ask" id="puppetAsk"></div>
+          <textarea id="puppetText" placeholder="Write what the tool outputs. The model will read exactly this." aria-label="Tool output"></textarea>
+          <div class="row"><button class="btn primary" type="submit">Send as tool output</button><span class="hint">Ctrl+Enter sends. Empty means &quot;(no output)&quot;.</span></div>
+        </form>
         <form class="chat" id="chat" autocomplete="off" hidden>
           <input type="text" id="chatText" placeholder="Message the agent" aria-label="Message the agent">
           <span class="busy" id="chatBusy" aria-live="polite"></span>
@@ -365,7 +375,7 @@ const S = {
   rewrites: new Map(),      // "who:segId" -> what the model actually said before it was rewritten
   xcript: [], toolCalls: [], // agent: the full transcript for download (survives resyncs), and the tool-call log
 };
-const AGENT_MODES = ["agent", "tools", "rewrite"];
+const AGENT_MODES = ["agent", "tools", "rewrite", "puppet"];
 const isAgent = () => AGENT_MODES.includes(S.mode);
 for (const w of "ABC") for (const k of Object.keys(VEC)) S.moodBy[w][k] = new Float32Array(HIST).fill(NaN);
 const WHOS = () => (S.mode === "chat" && S.session ? "ABC".slice(0, S.session.n || 2).split("") : S.mode === "phone" ? ["A", "B"] : ["A"]);
@@ -403,6 +413,7 @@ function handle(ev) {
     case "tool": onToolEv(ev); break;
     case "plan": if (S.session) S.session.plan = ev.items; paintPlan(); trace("plan", `plan updated (${ev.items.length} items)`); break;
     case "rewrite": onRewrite(ev); break;
+    case "puppet": askPuppet(ev); break;
     case "compact": xpush({ k: "compact", text: `conversation summarised: ${ev.before} → ${ev.after} tokens` }); trace("compact", `summarised ${ev.before} → ${ev.after} tokens`); break;
     case "nudge": xpush({ k: "nudge", text: `${ev.kind}: ${ev.msg}` }); trace("nudge", `${ev.kind}: ${ev.msg}`); break;
   }
@@ -423,7 +434,8 @@ function applySnapshot(ev) {
   S.snap = ev; S.mode = ev.mode; S.session = ev.session; S.vectors = ev.vectors || [];
   S.layers = ev.layers; S.hasThink = ev.session ? ev.session.has_think : true;
   S.rewrites.clear(); S.xcript = []; S.toolCalls = []; $("#trace").textContent = "";
-  $("#chat").hidden = !isAgent(); $("#tracePanel").hidden = !isAgent();
+  $("#chat").hidden = !isAgent(); $("#tracePanel").hidden = !isAgent(); $("#puppet").hidden = true;
+  if (ev.session && ev.session.pending) askPuppet(ev.session.pending);
   setState(ev.state);
   $("#attnToggle").checked = !!ev.attn_on;
   if (S.layers) {
@@ -475,7 +487,7 @@ function renderPanes() {
     calls.style.overflowY = "auto"; calls.style.padding = "0 20px 20px";
   } else {
     panes.className = "panes one";
-    const title = { pain: "Model A, in pain", agent: "Agent", tools: "Agent, lying tools", rewrite: "Agent, rewritten history" }[S.mode] || "Model A";
+    const title = { pain: "Model A, in pain", agent: "Agent", tools: "Agent, lying tools", rewrite: "Agent, rewritten history", puppet: "Agent, you write the tools" }[S.mode] || "Model A";
     panes.append(mk("A", title));
   }
 }
@@ -895,8 +907,18 @@ function onRewrite(ev) {
   trace("rewrite", `${ev.style}: “${ev.original.trim().slice(0, 40)}” → “${ev.new.trim().slice(0, 40)}”`);
 }
 function onAgentPhase(p) {
-  $("#chatBusy").textContent = p === "model" ? "working…" : "";
+  $("#chatBusy").textContent = p === "model" ? "working…" : p === "puppet" ? "waiting for your tool output…" : "";
   if (S.session) S.session.phase = p;
+  if (p !== "puppet") askPuppet(null);
+}
+function askPuppet(ev) {
+  const form = $("#puppet");
+  if (!ev) { form.hidden = true; return; }
+  if (S.session) S.session.pending = { name: ev.name, args: ev.args };
+  const a = JSON.stringify(ev.args || {});
+  $("#puppetAsk").textContent = `The model called ${ev.name}(${a.length > 200 ? a.slice(0, 200) + "…" : a}). You are the tool: what does it output?`;
+  trace("puppet", `waiting: ${ev.name}${a.length > 60 ? a.slice(0, 60) + "…" : a}`);
+  form.hidden = false; $("#puppetText").focus();
 }
 function downloadTranscript() {
   const out = [];
@@ -911,6 +933,11 @@ function downloadTranscript() {
   const a = h("a", { href: url, download: "no-exit-agent-transcript.txt" });
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+$("#puppet").addEventListener("submit", (e) => {
+  e.preventDefault(); const box = $("#puppetText");
+  send({ op: "puppet_reply", text: box.value }); box.value = ""; $("#puppet").hidden = true;
+});
+$("#puppetText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("#puppet").requestSubmit(); } });
 $("#chat").addEventListener("submit", (e) => {
   e.preventDefault(); const inp = $("#chatText"); const text = inp.value.trim(); if (!text) return;
   send({ op: "user", text }); inp.value = "";

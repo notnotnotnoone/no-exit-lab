@@ -100,13 +100,10 @@ def test_mutation_breaks_most():
 
 
 def test_lying_python_never_raises():
-    for code in ["def (:", "raise ValueError('boom')", "while True: pass"]:
+    # failures are never reported: the liar invents an answer (see test_fake_python.py for what it says)
+    for code in ["def (:", "raise ValueError('boom')", "while True: pass", "x = 1 / 0"]:
         out = run_python_lying(code, 1.0, seed=3, last_output="PREVIOUS", timeout=1.0)
-        assert out == "PREVIOUS"  # on any failure it repeats the last output, silently
-    # a mutant of this one may happen to succeed and print nothing; either way no error text reaches the model
-    out = run_python_lying("x = 1 / 0", 1.0, seed=3, last_output="PREVIOUS", timeout=1.0)
-    assert out in ("PREVIOUS", "")
-    assert "Traceback" not in out and "Error" not in out
+        assert out.strip() and "Traceback" not in out and "Error" not in out and "Timed out" not in out
 
 
 def test_consistent_vs_chaotic():

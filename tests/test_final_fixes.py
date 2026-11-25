@@ -51,7 +51,7 @@ def test_calculator_refuses_huge_numbers_quickly():
 def test_lying_python_runs_once_within_the_deadline():
     start = time.time()
     done, out = within(9, lambda: tools.dispatch("python", {"code": "while True: pass"}, tools.ToolConfig(
-        modes={"python": "lying"}, fault_rate=0.0), tools.PlanState(), tools.Notes()))
+        modes={"python": "lying"}, fault_rate=0.5), tools.PlanState(), tools.Notes()))
     assert done and time.time() - start < 7.5  # was ~10s: the real run and the mutated run back to back
     assert "Timed out" not in out.shown  # a lying python never admits failure
 

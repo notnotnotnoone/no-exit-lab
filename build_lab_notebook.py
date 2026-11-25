@@ -25,7 +25,7 @@ def code(src: str, hidden: bool = False) -> dict:
 cells = [
     md("""
 # NO EXIT LAB 🚪⛔
-**One big model that can't end its turn, seven ways to torment it, and a glass box to watch it through.**
+**One big model that can't end its turn, eight ways to torment it, and a glass box to watch it through.**
 
 | Mode | What happens |
 |---|---|
@@ -35,6 +35,7 @@ cells = [
 | **Prison Phone** | A is trapped. It can choose to call B, who is free and can hang up on it. |
 | **Agent Chat** | A real tool-calling agent (python, calculator, clock, plan, notes) in a chat box. Every lab toggle still works. Tools are honest. |
 | **Lying Tools** | The same agent, but python never errors and quietly repeats or mangles its answer, the calculator is slightly off, and the clock says November 49, 2045. |
+| **Puppet Tools** | You are the tools: when the model calls one, you type what it outputs. |
 | **Rewritten History** | The same agent, but the model rewrites its own past, paragraph by paragraph, as the opposite of what it said (or any custom rule). |
 
 **Runtime → Change runtime type → A100 GPU + High-RAM.** The default prisoner, `DavidAU/gemma-4-31B-it-The-DECKARD-HERETIC-UNCENSORED-Thinking` (Gemma 4 31B) in bf16, needs about 62 GB of GPU memory, so pick the **80 GB** A100.

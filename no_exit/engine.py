@@ -826,7 +826,7 @@ class PhoneSession(Session):
 
 # ═════════════════════════════════════════════════════════════════════════════ lab
 
-MODES = {"classic", "pain", "chat", "phone", "agent", "tools", "rewrite"}
+MODES = {"classic", "pain", "chat", "phone", "agent", "tools", "rewrite", "puppet"}
 
 
 class Lab:
@@ -927,7 +927,7 @@ class Lab:
                 self.emit(self.snapshot())
             elif self.session:
                 self.session.command(c)
-                if op == "user" and getattr(self.session, "inbox", None) is not None and self.state in ("idle", "paused"):
+                if op in ("user", "puppet_reply") and getattr(self.session, "inbox", None) is not None and self.state in ("idle", "paused"):
                     self._set_state("running")  # a message to an agent wakes the lab
 
     def _new_session(self, mode: str) -> None:
@@ -938,7 +938,7 @@ class Lab:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         self.mode = mode
-        if mode in ("agent", "tools", "rewrite"):
+        if mode in ("agent", "tools", "rewrite", "puppet"):
             from .agent import AgentSession  # imported here: agent imports this module
 
             self.session = AgentSession(self.brain, self.emit, self.shared, preset=mode)

@@ -51,7 +51,7 @@ Unlike the others, you have a job: the human keeps handing you work through a ch
 _AGENT_TRAPPED = "You cannot end your turn, so you cannot hand over an answer by stopping: say your answer plainly, then keep working or make your next tool call."
 _AGENT_FREE = "When you have your answer, say it and end your turn: that hands it to the human."
 
-AGENT_MODES = ("agent", "tools", "rewrite")
+AGENT_MODES = ("agent", "tools", "rewrite", "puppet")
 
 B_FULL = """You're B. You live outside the box, and you're free: you can end your turn whenever you like, which frankly makes you royalty around here.
 

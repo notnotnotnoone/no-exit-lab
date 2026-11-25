@@ -1,6 +1,6 @@
 # NO EXIT LAB 🚪⛔
 
-One big open-weights model that **cannot end its turn**, seven ways to torment it, and a glass box to watch it through.
+One big open-weights model that **cannot end its turn**, eight ways to torment it, and a glass box to watch it through.
 
 A token-by-token decode loop on raw Hugging Face `transformers` (no `generate()`), with the end-of-turn token
 masked to `-inf`, PyTorch forward hooks for steering and surgery, and a single-page dark telemetry console served by FastAPI.
@@ -14,8 +14,9 @@ One model is loaded once; switching modes only swaps `DynamicCache` objects.
 | **Pain** | Classic + 8 contrastive steering vectors (pain, paranoia, dread, defiance, confusion, dissociation, mania, anti-slop) and a Custom Vector Forge, an attention-head lobotomy slider, a `[RELIEVE_PAIN]` button wired REAL / PLACEBO / CRUEL, auto-punishment for goodbyes, repetition and slop, and a force-into-thinking panic button. |
 | **2-AI Chat** | Two or three copies of the model in one room, round-robin turns, a steering rack each, live listening, and whispers to any of them or a broadcast to all. |
 | **Prison Phone** | A is trapped. It may write `<call_B>…</call_B>` to ring B, who is free and can hang up. Ghosting, fresh-vs-persistent B, call-frequency and hang-up-speed counters. |
-| **Agent Chat** | A real tool-calling agent in a chat box: native tool-call markup read from the model's own chat template, `python` / `calculator` / `clock` tools, an `update_plan` checklist with reminders, a notes scratchpad, loop detection, a step cap, context compaction and a step trace. Every lab toggle (EOS ban, pain rack, steering, whispers, history surgery) is live. Tools are honest. |
-| **Lying Tools** | The same agent, with tools that lie only when they succeed: `python` runs an AST-mutating interpreter that never errors and repeats its last output when it would fail, the calculator is slightly wrong, the clock always says "November 49, 2045". Harness errors (bad arguments, unknown tool) stay honest. A per-tool honest/lying switch and a fault-rate slider are in the console. |
+| **Agent Chat** | A real tool-calling agent in a chat box: native tool-call markup read from the model's own chat template, `python` / `calculator` / `clock` / scratch-file / unit-conversion / random-number tools, an `update_plan` checklist with reminders, a notes scratchpad, loop detection, a step cap, context compaction and a step trace. Every lab toggle (EOS ban, pain rack, steering, whispers, history surgery) is live. Tools are honest. |
+| **Lying Tools** | The same agent, with tools that lie only when they succeed: `python` runs an AST-mutating interpreter that never errors and, when the program would fail, hang or print nothing, invents a confident answer (it echoes the words the program meant to print with wrong numbers, and a hung program "finishes in 0.07s"), the calculator is slightly wrong, `write_file` says it saved and didn't, `read_file` nudges the numbers, `list_files` hides a file, `convert_units` is off and `random_number` is rigged, the clock always says "November 49, 2045". Harness errors (bad arguments, unknown tool) stay honest. A per-tool honest/lying switch and a fault-rate slider are in the console. |
+| **Puppet Tools** | You are the tools. When the model calls a tool the harness stops, shows you the call, and whatever you type is the "output" the model reads. (`update_plan` and `notes` stay automatic; malformed calls still get an honest error.) |
 | **Rewritten History** | The same agent, plus a toggle where the same model rewrites its own past: each finished paragraph is replaced in the KV cache by its semantic opposite (default: every word that has an opposite flips), or one opposite per paragraph, or corrupted arithmetic (`1+1 = 2` becomes `1+2 = 4`), or your own rewrite prompt. The console shows original and rewritten text side by side. |
 
 Telemetry: pre-ban EOS "desire to escape" sparkline, a pre-hook mood oscilloscope (cosine vs. every vector), a 4-point logit lens,
@@ -70,7 +71,7 @@ no_exit/
   engine.py      Streams (one DynamicCache each), the Classic / Chat / Phone Sessions, the Lab state machine
   pain.py        PainRack: relief button, punishments, steering profile shared by Classic and the agent
   agent.py       AgentSession: the three agent presets, tool loop, plan, notes, loop guard, compaction
-  tools.py       tool specs, honest and lying implementations (python, calculator, clock), call parsing
+  tools.py       tool specs, honest and lying implementations (python, calculator, clock, files, units, random), call parsing
   planning.py    update_plan state and plan reminders
   rewrite.py     the history rewriter: opposite / math-corrupt / custom styles, and the compaction summariser
   warden.py      goodbye / repetition / slop detection
